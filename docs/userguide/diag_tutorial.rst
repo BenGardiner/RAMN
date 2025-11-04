@@ -96,7 +96,9 @@ The error codes that you are the most likely to encounter are:
 - 0x13 - "Incorrect message length or invalid format": this means that the service (and sub-function if applicable) are supported, but your request has an invalid size (too many or not enough parameter bytes).
 - 0x31 - "Request out of range": this means that your request has a valid format and is supported, but your parameters are out of the valid range. For example, you tried to read a memory address that does not exist (but you did provide an address with a valid format).
 - 0x33 - "Security access denied": this means that you need to unlock the service (see :ref:`security_access`) before using it.
-- 0x7E - "Service not supported in active session": this means that you must first request a different diagnostic session (see :ref:`diag_sess_control`).
+- 0x7E - "Sub-function not supported in active session": this means that you must request a different diagnostic session before you can use the sub-function (see :ref:`diag_sess_control`).
+- 0x7F - "Service not supported in active session": same as above, but for services instead of sub-functions.
+
 
 You may also encounter timing-related "errors":
 
