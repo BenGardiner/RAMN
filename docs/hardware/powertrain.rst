@@ -1,3 +1,5 @@
+.. _powertrain_details:
+
 Powertrain
 ==========
 

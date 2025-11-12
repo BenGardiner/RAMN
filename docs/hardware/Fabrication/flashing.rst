@@ -99,6 +99,7 @@ Linux Environment
 
 .. code-block:: console
 
+    $ cd RAMN/scripts
     $ pip install -r requirements.txt
 
 .. warning:: 

@@ -128,10 +128,25 @@ You can identify the correct orientation of each component from the pictures abo
 
 	Although there are silkscreen markings to indicate the correct orientation of each component, the two following components are susceptible to be soldered with the wrong orientation by the fab and therefore require extra attention:
 
-	- SW1 (Shift Joystick): the notch should be on the opposite side of the silkscreen word "SHIFT" (it is barely visible in the picture above).
-	- SW3 (Lighting Switch): the notch on the knob should be on the side of the pin header (see picture above). There are four possible positions for this switch; if you are shown a picture where the notch is parallel to the pin header, then it should be on the opposite side of the hand brake switch.
+	- SW1 (Shift Joystick): the notch should be on the opposite side of the silkscreen word "SHIFT" (see :ref:`powertrain_details`).
+	- SW3 (Lighting Switch): see pictures below.
+	
+	.. table:: Incorrect lighting switch orientation (leftmost, rightmost, without cap)
+	   :align: center
 
-	You can find another picture in the :ref:`qualitycheck` section.
+	   +---------------------------+---------------------------+---------------------------+
+	   | .. image:: img/wrong_l.jpg| .. image:: img/wrong_r.jpg| .. image:: img/wrong_o.jpg|
+	   |    :width: 200px          |    :width: 200px          |    :width: 200px          |
+	   +---------------------------+---------------------------+---------------------------+
+	   
+	.. table:: Correct lighting switch orientation (leftmost, rightmost, without cap)
+	   :align: center
+
+	   +-----------------------------+-----------------------------+-----------------------------+
+	   | .. image:: img/correct_l.jpg| .. image:: img/correct_r.jpg| .. image:: img/correct_o.jpg|
+	   |    :width: 200px            |    :width: 200px            |    :width: 200px            |
+	   +-----------------------------+-----------------------------+-----------------------------+
+		  
 
 Below are clarifications based on past questions from fabs:
 
