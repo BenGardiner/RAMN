@@ -12,8 +12,8 @@ Custom commands compatible with slcan are not very user-friendly; however, it is
 
 If you are not familiar with serial terminals, keep in mind the following items:
 
-- When using RAMN's slcan interface, you need to specify "CR" as the endline character.
-- You must ensure that the serial port of RAMN is not being used by any other program (virtual machine or programs accessing CAN).
+- When using RAMN's slcan interface, you need to specify "CR" as the endline character ('\\r').
+- You must ensure that the serial port of RAMN is not being used by any other program (virtual machine or programs accessing CAN). **This includes "slcand" used previously in this user guide**. If you cannot access the USB serial interface, try unplugging and replugging the USB cable (and do not run slcand after).
 - By default, you should not expect any serial interface to support the "backspace" character. If you made a mistake while typing a command, you need to restart from the beginning. RAMN's :ref:`usb_cli` supports backspaces to be more user-friendly.
 
 .. warning::

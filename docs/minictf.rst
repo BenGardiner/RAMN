@@ -27,9 +27,9 @@ CAN
 Transmission
 """"""""""""
 
-- **Very easy**: There is a flag broadcast with CAN ID 0x770 if you send any message with ID 0x456.
-- **Very easy**: There is a flag broadcast with CAN ID 0x771 if you send a CAN message with ID 0x457 and payload "GIVEFLAG".
-- **Very easy**: There is a flag broadcast with CAN ID 0x772 if you send a remote frame with a specific ID.
+- **Very easy**: There is a flag broadcast with CAN ID 0x770 if you send any message with standard ID 0x456.
+- **Very easy**: There is a flag broadcast with CAN ID 0x771 if you send a CAN message with standard ID 0x457 and payload "GIVEFLAG".
+- **Very easy**: There is a flag broadcast with CAN ID 0x772 if you send a remote frame with a specific standard ID.
 - **Intermediate**: There is a flag broadcast with CAN ID 0x773 if you send a specific CAN message, checked with the following function:
 
 .. parsed-literal::
@@ -103,7 +103,7 @@ Transmission
 Reception
 """""""""
 
-Send a message with ID 0x458 and an empty payload to enable the periodic transmission of the following flags.
+Send a message with standard ID 0x458 and an empty payload to enable the periodic transmission of the following flags.
 
 - **Easy**: There is a flag broadcast one bit at a time with CAN ID 0x6F0.
 - **Intermediate**: There is a flag broadcast one bit at a time with CAN ID 0x6F1.
