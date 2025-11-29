@@ -49,7 +49,6 @@
 // Current implementation is experimental:
 // - Error frames are not reported
 // - CAN-FD is not supported
-// - HW timestamps are not supported
 // - Due to clock differences, bit timings are not respected (but equivalent baudrates are used)
 // Try increasing _Min_Stack_Size if you run into issues
 //#define ENABLE_GSUSB

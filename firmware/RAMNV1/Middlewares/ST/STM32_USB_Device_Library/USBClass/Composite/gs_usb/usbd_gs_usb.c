@@ -59,6 +59,7 @@ static const struct gs_device_config gscan_dconf = {
 const struct gs_device_bt_const gscan_btconst = {
 		GS_CAN_FEATURE_LISTEN_ONLY  // supported features
 		| GS_CAN_FEATURE_LOOP_BACK
+		| GS_CAN_FEATURE_HW_TIMESTAMP
 		| GS_CAN_FEATURE_IDENTIFY
 		| GS_CAN_FEATURE_USER_ID
 		| GS_CAN_FEATURE_PAD_PKTS_TO_MAX_PKT_SIZE,

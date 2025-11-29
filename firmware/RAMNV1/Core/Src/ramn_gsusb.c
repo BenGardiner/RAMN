@@ -47,7 +47,7 @@ RAMN_Result_t RAMN_GSUSB_ProcessRX(FDCAN_RxHeaderTypeDef *canRxHeader, uint8_t *
 		frameData->channel = 0;
 		frameData->flags = 0;
 		frameData->can_dlc = canRxHeader->DataLength;
-		frameData->timestamp_us = 0; // RAMN gs_usb does not support GS_CAN_FEATURE_HW_TIMESTAMP
+		frameData->timestamp_us = (xTaskGetTickCount() * (1000000 /*us per sec*/ / configTICK_RATE_HZ) );
 
 		if (!(frameData->can_id & CAN_RTR_FLAG)) RAMN_memcpy(frameData->data, canRxData, frameData->can_dlc);
 
