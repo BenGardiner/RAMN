@@ -24,7 +24,7 @@ if [ -e /workspace ]; then
 fi
 
 STM32CUBEIDEWORKSPACE="$( cd "$(dirname "${BASH_SOURCE[0]}")"/../../ ; pwd )"
-DOCKER_STM32CUBEIDE_VERSION=7.0 # see https://github.com/xanderhendriks/action-build-stm32cubeide#stm32-cube-ide-versions
+DOCKER_STM32CUBEIDE_VERSION=14.0 # see https://github.com/xanderhendriks/action-build-stm32cubeide#stm32-cube-ide-versions
 DOCKER_STM32CUBEIDE_COMMAND="docker run --rm -v .:/workspace xanderhendriks/stm32cubeide:${DOCKER_STM32CUBEIDE_VERSION} /workspace/scripts/build/docker_Clean_BUILD_Release.sh"
 
 ( cd "${STM32CUBEIDEWORKSPACE}"; ${DOCKER_STM32CUBEIDE_COMMAND} ) || exit 1
