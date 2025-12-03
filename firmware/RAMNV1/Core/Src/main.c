@@ -1656,7 +1656,7 @@ void RAMN_ReceiveCANFunc(void *argument)
 
 				if (RAMN_USB_Config.slcan_enableTimestamp != 0U)
 				{
-					index += uint16toASCII(xTaskGetTickCount() % 0xEA60,&slCAN_USBTxBuffer[index]);
+					index += uint16toASCII((xTaskGetTickCount() * (1000 /*ms per sec*/ / configTICK_RATE_HZ) ) % 0xEA60 /* 60,000 ms*/,&slCAN_USBTxBuffer[index]);
 				}
 
 				if ((RAMN_USB_Config.addESIFlag != 0U) && (CANRxHeader.FDFormat == FDCAN_FD_CAN) && (CANRxHeader.ErrorStateIndicator == FDCAN_ESI_PASSIVE))
