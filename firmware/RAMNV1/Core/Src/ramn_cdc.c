@@ -446,13 +446,13 @@ RAMN_Bool_t RAMN_CDC_ProcessSLCANBuffer(uint8_t* USBRxBuffer, uint32_t commandLe
 					offset += 2U;
 				}
 
+				RAMN_USB_SendFromTask((uint8_t*)"\r",1U);
+
 				while (RAMN_FDCAN_SendMessage(&CANTxHeader,CANTxData) == RAMN_TRY_LATER)
 				{
 					// Buffer is Full, Try later
 					osDelay(10U);
 				}
-
-				RAMN_USB_SendFromTask((uint8_t*)"\r",1U);
 
 #if defined(CAN_ECHO)
 				RAMN_USB_SendFromTask(USBRxBuffer,commandLength);
@@ -496,8 +496,8 @@ RAMN_Bool_t RAMN_CDC_ProcessSLCANBuffer(uint8_t* USBRxBuffer, uint32_t commandLe
 					offset += 2U;
 				}
 
-				while (RAMN_FDCAN_SendMessage(&CANTxHeader,CANTxData) == RAMN_TRY_LATER) osDelay(10U);
 				RAMN_USB_SendFromTask((uint8_t*)"\r",1U);
+				while (RAMN_FDCAN_SendMessage(&CANTxHeader,CANTxData) == RAMN_TRY_LATER) osDelay(10U);
 #if defined(CAN_ECHO)
 				RAMN_USB_SendFromTask(USBRxBuffer,commandLength);
 #endif
@@ -542,8 +542,8 @@ RAMN_Bool_t RAMN_CDC_ProcessSLCANBuffer(uint8_t* USBRxBuffer, uint32_t commandLe
 			{
 				uint8toASCII(*((uint8_t*)(HARDWARE_UNIQUE_ID_ADDRESS+k)),&smallResponseBuffer[1U+2*k]);
 			}
-			RAMN_USB_SendFromTask(smallResponseBuffer, 25U);
-			RAMN_USB_SendFromTask((uint8_t*)"\r",1U);
+			smallResponseBuffer[25U] = '\r';
+			RAMN_USB_SendFromTask(smallResponseBuffer, 26U);
 			break;
 		case 'S': // Set baudrate
 			if (commandLength > 1U && commandLength <= 8U)
