@@ -534,11 +534,11 @@ RAMN_Bool_t RAMN_CDC_ProcessSLCANBuffer(uint8_t* USBRxBuffer, uint32_t commandLe
 			uint8_t idx = 0U;
 			RAMN_memcpy(&smallResponseBuffer[idx], (const uint8_t*)"V1 SLCAN RAMN (", 15U);
 			idx += 15U;
-			RAMN_memcpy(&smallResponseBuffer[idx], (const uint8_t*)__DATE__, sizeof(__DATE__));
-			idx += sizeof(__DATE__);
+			RAMN_memcpy(&smallResponseBuffer[idx], (const uint8_t*)__DATE__, sizeof(__DATE__) - 1U);
+			idx += sizeof(__DATE__) - 1U;
 			smallResponseBuffer[idx++] = ' ';
-			RAMN_memcpy(&smallResponseBuffer[idx], (const uint8_t*)__TIME__, sizeof(__TIME__));
-			idx += sizeof(__TIME__);
+			RAMN_memcpy(&smallResponseBuffer[idx], (const uint8_t*)__TIME__, sizeof(__TIME__) - 1U);
+			idx += sizeof(__TIME__) - 1U;
 			smallResponseBuffer[idx++] = ')';
 			smallResponseBuffer[idx++] = '\r';
 			RAMN_USB_SendFromTask(smallResponseBuffer, idx);
