@@ -446,13 +446,16 @@ RAMN_Bool_t RAMN_CDC_ProcessSLCANBuffer(uint8_t* USBRxBuffer, uint32_t commandLe
 					offset += 2U;
 				}
 
-				RAMN_USB_SendFromTask((uint8_t*)"\r",1U);
+				// Hold USB TX lock across ack + CAN send to prevent CAN RX from interleaving
+				RAMN_USB_AcquireLock();
+				RAMN_USB_SendFromTask_Locked((uint8_t*)"\r",1U);
 
 				while (RAMN_FDCAN_SendMessage(&CANTxHeader,CANTxData) == RAMN_TRY_LATER)
 				{
 					// Buffer is Full, Try later
 					osDelay(10U);
 				}
+				RAMN_USB_ReleaseLock();
 
 #if defined(CAN_ECHO)
 				RAMN_USB_SendFromTask(USBRxBuffer,commandLength);
@@ -496,8 +499,11 @@ RAMN_Bool_t RAMN_CDC_ProcessSLCANBuffer(uint8_t* USBRxBuffer, uint32_t commandLe
 					offset += 2U;
 				}
 
-				RAMN_USB_SendFromTask((uint8_t*)"\r",1U);
+				// Hold USB TX lock across ack + CAN send to prevent CAN RX from interleaving
+				RAMN_USB_AcquireLock();
+				RAMN_USB_SendFromTask_Locked((uint8_t*)"\r",1U);
 				while (RAMN_FDCAN_SendMessage(&CANTxHeader,CANTxData) == RAMN_TRY_LATER) osDelay(10U);
+				RAMN_USB_ReleaseLock();
 #if defined(CAN_ECHO)
 				RAMN_USB_SendFromTask(USBRxBuffer,commandLength);
 #endif
