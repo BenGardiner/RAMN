@@ -551,28 +551,20 @@ RAMN_Bool_t RAMN_CDC_ProcessSLCANBuffer(uint8_t* USBRxBuffer, uint32_t commandLe
 			RAMN_FDCAN_ResetPeripheral();
 			break;
 		case 'V': // Return SW version
-		{
-			uint8_t idx = 0U;
-			RAMN_memcpy(&smallResponseBuffer[idx], (const uint8_t*)"V1 SLCAN RAMN (", 15U);
-			idx += 15U;
-			RAMN_memcpy(&smallResponseBuffer[idx], (const uint8_t*)__DATE__, sizeof(__DATE__) - 1U);
-			idx += sizeof(__DATE__) - 1U;
-			smallResponseBuffer[idx++] = ' ';
-			RAMN_memcpy(&smallResponseBuffer[idx], (const uint8_t*)__TIME__, sizeof(__TIME__) - 1U);
-			idx += sizeof(__TIME__) - 1U;
-			smallResponseBuffer[idx++] = ')';
-			smallResponseBuffer[idx++] = '\r';
-			RAMN_USB_SendFromTask(smallResponseBuffer, idx);
+			RAMN_USB_SendFromTask((uint8_t*)"V1 SLCAN RAMN (",15U);
+			RAMN_USB_SendFromTask((uint8_t*)__DATE__,sizeof(__DATE__));
+			RAMN_USB_SendFromTask((uint8_t*)" ",1U);
+			RAMN_USB_SendFromTask((uint8_t*)__TIME__,sizeof(__TIME__));
+			RAMN_USB_SendFromTask((uint8_t*)")\r",2U);
 			break;
-		}
 		case 'N': // Return serial number
 			smallResponseBuffer[0U] = 'N';
 			for(uint8_t k = 0; k <12U; k++)
 			{
 				uint8toASCII(*((uint8_t*)(HARDWARE_UNIQUE_ID_ADDRESS+k)),&smallResponseBuffer[1U+2*k]);
 			}
-			smallResponseBuffer[25U] = '\r';
-			RAMN_USB_SendFromTask(smallResponseBuffer, 26U);
+			RAMN_USB_SendFromTask(smallResponseBuffer, 25U);
+			RAMN_USB_SendFromTask((uint8_t*)"\r",1U);
 			break;
 		case 'S': // Set baudrate
 			if (commandLength > 1U && commandLength <= 8U)
@@ -840,30 +832,26 @@ RAMN_Bool_t RAMN_CDC_ProcessSLCANBuffer(uint8_t* USBRxBuffer, uint32_t commandLe
 #endif
 			break;
 		case 'q': // Get status of FIFOs
-		{
 			// Reports the status of each Stream Buffer over USB, stores data in provided buffer
-			uint8_t idx = 0U;
-			smallResponseBuffer[idx++] = 'q';
+			RAMN_USB_SendStringFromTask("q");
 
 			// RX FIFO Fill Level
-			idx += uint32toASCII(HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1,FDCAN_RX_FIFO0), &smallResponseBuffer[idx]);
+			RAMN_USB_SendASCIIUint32(HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1,FDCAN_RX_FIFO0));
 
 			// TX FIFO Free Level
-			idx += uint32toASCII(HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1), &smallResponseBuffer[idx]);
+			RAMN_USB_SendASCIIUint32(HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1));
 
 #ifdef ENABLE_CDC
 			// CAN RX Stream Buffer levels
-			idx += uint32toASCII(xStreamBufferSpacesAvailable(CANRxDataStreamBufferHandle), &smallResponseBuffer[idx]);
-			idx += uint32toASCII(xStreamBufferBytesAvailable(CANRxDataStreamBufferHandle), &smallResponseBuffer[idx]);
+			RAMN_USB_SendASCIIUint32(xStreamBufferSpacesAvailable(CANRxDataStreamBufferHandle));
+			RAMN_USB_SendASCIIUint32(xStreamBufferBytesAvailable(CANRxDataStreamBufferHandle));
 
 			// CAN TX Stream Buffer levels
-			idx += uint32toASCII(xStreamBufferSpacesAvailable(CANTxDataStreamBufferHandle), &smallResponseBuffer[idx]);
-			idx += uint32toASCII(xStreamBufferBytesAvailable(CANTxDataStreamBufferHandle), &smallResponseBuffer[idx]);
+			RAMN_USB_SendASCIIUint32(xStreamBufferSpacesAvailable(CANTxDataStreamBufferHandle));
+			RAMN_USB_SendASCIIUint32(xStreamBufferBytesAvailable(CANTxDataStreamBufferHandle));
 #endif
-			smallResponseBuffer[idx++] = '\r';
-			RAMN_USB_SendFromTask(smallResponseBuffer, idx);
+			RAMN_USB_SendStringFromTask("\r");
 			break;
-		}
 #ifdef ENABLE_USB_DEBUG
 		case 'I':// Send GW Stats information
 			RAMN_DEBUG_ReportCANStats(&RAMN_FDCAN_Status);
