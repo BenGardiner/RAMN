@@ -106,10 +106,13 @@ jobs:
             enable: ""
             disable: "ENABLE_J1979 ENABLE_MINICTF ENABLE_CHIP8 ENABLE_SCREEN ENABLE_SPI"
           # Test ECUA without debug and stats features
+          # ENABLE_SCREEN must also be disabled because ramn_screen_manager.c
+          # calls RAMN_Joystick_Pop() which requires ENABLE_JOYSTICK_CONTROLS.
+          # ENABLE_CHIP8 must be disabled because it requires ENABLE_SCREEN.
           - ecu: TARGET_ECUA
             variant: no_debug
             enable: ""
-            disable: "ENABLE_USB_DEBUG ENABLE_JOYSTICK_CONTROLS GENERATE_RUNTIME_STATS"
+            disable: "ENABLE_USB_DEBUG ENABLE_JOYSTICK_CONTROLS ENABLE_SCREEN ENABLE_CHIP8 GENERATE_RUNTIME_STATS"
           # Test KWP protocol on ECUB
           - ecu: TARGET_ECUB
             variant: kwp
@@ -361,8 +364,8 @@ jobs:
             echo "| 3 | \`ENABLE_CDC\` | default (ECUA) | variant: gsusb (ECUA) | ✅ |"
             echo "| 4 | \`ENABLE_GSUSB\` | variant: gsusb (ECUA) | default (all) | ✅ |"
             echo "| 5 | \`ENABLE_SPI\` | default (ECUA, ECUD) | default (ECUB, ECUC) | ✅ |"
-            echo "| 6 | \`ENABLE_SCREEN\` | default (ECUA) | default (ECUB, ECUC, ECUD) | ✅ |"
-            echo "| 7 | \`ENABLE_CHIP8\` | default (ECUA) | default (ECUB, ECUC, ECUD) | ✅ |"
+            echo "| 6 | \`ENABLE_SCREEN\` | default (ECUA) | variant: no_debug (ECUA) | ✅ |"
+            echo "| 7 | \`ENABLE_CHIP8\` | default (ECUA) | variant: no_debug (ECUA) | ✅ |"
             echo "| 8 | \`ENABLE_MINICTF\` | default (ECUA, ECUD) | default (ECUB, ECUC) | ✅ |"
             echo "| 9 | \`ENABLE_UDS_REPROGRAMMING\` | default (all) | variant: no_uds (ECUA) | ✅ |"
             echo "| 10 | \`ENABLE_UDS\` | default (all) | variant: no_uds (ECUA) | ✅ |"
