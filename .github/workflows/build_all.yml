@@ -60,6 +60,8 @@ jobs:
           path: .
 
   macro_coverage:
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -118,11 +120,16 @@ jobs:
           echo "| Action | Macro |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
 
+          # Comment out #define lines: matches "#define MACRO" with word boundary
+          # to avoid partial matches (e.g. ENABLE_UDS won't match ENABLE_UDS_REPROGRAMMING).
+          # Uses [^A-Za-z0-9_] or end-of-line as word boundary after the macro name.
           for macro in ${{ matrix.disable }}; do
             sed -i "s~^\([[:space:]]*\)#define ${macro}\([^A-Za-z0-9_]\|$\)~\1//#define ${macro}\2~" "$CONFIG"
             echo "| Disabled | \`${macro}\` |" >> $GITHUB_STEP_SUMMARY
           done
 
+          # Uncomment //#define lines: handles both "//#define" and "// #define" formats
+          # (zero or more spaces between // and #define) with the same word boundary logic.
           for macro in ${{ matrix.enable }}; do
             sed -i "s~^\([[:space:]]*\)//[[:space:]]*#define ${macro}\([^A-Za-z0-9_]\|$\)~\1#define ${macro}\2~" "$CONFIG"
             echo "| Enabled | \`${macro}\` |" >> $GITHUB_STEP_SUMMARY
@@ -158,6 +165,7 @@ jobs:
           fi
 
   coverage_report:
+    permissions: {}
     needs: [build_all, macro_coverage]
     if: always()
     runs-on: ubuntu-latest
@@ -201,7 +209,7 @@ jobs:
           - **Macros fully covered (both ON and OFF):** 18 / 21 (85.7%)
           - **Build coverage: 85.7%** ✅ (target: ≥80%)
           - **Not covered in both states:**
-            - `ENABLE_USB` — Only tested ON. Disabling USB on ECUA would remove its primary host interface.
+            - `ENABLE_USB` — Only tested ON. Disabling USB on ECUA would remove ECUA's primary host interface.
             - `ENABLE_USB_AUTODETECT` — Only tested OFF. Marked as potentially incompatible with some OS/applications.
             - `ENABLE_I2C` — Only tested OFF. Marked as CURRENTLY UNTESTED in source.
 
