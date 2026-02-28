@@ -225,6 +225,7 @@ uint32_t FDCAN_GetQueueSize(void)
  */
 uint32_t FDCAN_ConvertToDLC(int n)
 {
+	if (n <= 0)  return FDCAN_DLC_BYTES_0;
 	if (n <= 8)  return (uint32_t)n;
 	if (n <= 12) return FDCAN_DLC_BYTES_12;
 	if (n <= 16) return FDCAN_DLC_BYTES_16;
