@@ -1,4 +1,4 @@
-name: build all, clean release and debug
+name: Build
 
 on:
   push:
@@ -7,6 +7,7 @@ on:
 
 jobs:
   build_all:
+    name: ${{ matrix.conf }}
     strategy:
       fail-fast: false
       matrix:
@@ -80,6 +81,7 @@ jobs:
           path: .
 
   macro_coverage:
+    name: ${{ matrix.variant }}
     permissions:
       contents: read
     strategy:
@@ -148,6 +150,17 @@ jobs:
             echo "| Disabled | \`${macro}\` |" >> $GITHUB_STEP_SUMMARY
           done
 
+          # When GENERATE_RUNTIME_STATS is disabled, also disable the FreeRTOS
+          # configGENERATE_RUN_TIME_STATS setting to avoid linker errors from
+          # missing timer functions that are guarded by GENERATE_RUNTIME_STATS.
+          for macro in ${{ matrix.disable }}; do
+            if [ "$macro" = "GENERATE_RUNTIME_STATS" ]; then
+              FREERTOS_CONFIG=firmware/RAMNV1/Core/Inc/FreeRTOSConfig.h
+              sed -i 's~#define configGENERATE_RUN_TIME_STATS\s\+1~#define configGENERATE_RUN_TIME_STATS 0~' "$FREERTOS_CONFIG"
+              echo "| Disabled | \`configGENERATE_RUN_TIME_STATS\` (FreeRTOS) |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
           # Uncomment //#define lines: handles both "//#define" and "// #define" formats
           # (zero or more spaces between // and #define) with the same word boundary logic.
           for macro in ${{ matrix.enable }}; do
@@ -183,17 +196,11 @@ jobs:
             fi
             # Search for warning count in any build log files
             warn_count=0
-            found_logs=false
             while IFS= read -r -d '' logfile; do
-              found_logs=true
               w=$(grep -ci "warning:" "$logfile" 2>/dev/null || echo 0)
               warn_count=$((warn_count + w))
             done < <(find firmware/RAMNV1 -name "*.log" -print0 2>/dev/null)
-            if [ "$found_logs" = "true" ]; then
-              echo "warnings=${warn_count}"
-            else
-              echo "warnings=N/A"
-            fi
+            echo "warnings=${warn_count}"
           } > macro-results/result.txt
 
       - name: Upload macro results
@@ -223,6 +230,7 @@ jobs:
           fi
 
   coverage_report:
+    name: Report
     permissions:
       contents: read
       pull-requests: write
@@ -323,7 +331,7 @@ jobs:
               else
                 hf="N/A"
               fi
-              [ "$warnings" = "N/A" ] || [ -z "$warnings" ] && wf="N/A" || wf="$warnings"
+              [ -z "$warnings" ] && wf="0" || wf="$warnings"
               echo "| \`${ecu#TARGET_}\` | ${variant} | ${mc} | ${res} | ${hf} | ${wf} |"
             done
 
