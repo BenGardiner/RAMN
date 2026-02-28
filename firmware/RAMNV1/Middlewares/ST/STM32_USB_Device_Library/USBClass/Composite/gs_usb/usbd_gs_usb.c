@@ -43,6 +43,7 @@
 #include "usbd_gsusb_if.h"
 #include "gs_usb_breq.h"
 
+#ifdef ENABLE_GSUSB
 static uint8_t gsusb_vendor_request(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef *req);
 
 // device info
@@ -54,6 +55,7 @@ static const struct gs_device_config gscan_dconf = {
 		1, // software version
 		2  // hardware version
 };
+#endif
 
 // bit timing constraints
 const struct gs_device_bt_const gscan_btconst = {
