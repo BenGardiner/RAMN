@@ -8,6 +8,8 @@ on:
 jobs:
   build_all:
     name: ${{ matrix.conf }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
