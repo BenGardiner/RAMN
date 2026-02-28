@@ -175,10 +175,12 @@ jobs:
       - name: Build ${{ matrix.ecu }}
         id: build
         continue-on-error: true
-        uses: xanderhendriks/action-build-stm32cubeide@v7.0
-        with:
-          project-path: firmware/RAMNV1 -D ${{ matrix.ecu }}
-          project-target: RAMNV1/Release -D ${{ matrix.ecu }}
+        run: |
+          set -o pipefail
+          docker run --rm -v "$GITHUB_WORKSPACE:/github/workspace" -w /github/workspace xanderhendriks/stm32cubeide:7.0 bash -c "
+            stm32cubeide --launcher.suppressErrors -nosplash -application org.eclipse.cdt.managedbuilder.core.headlessbuild -data workspace -import firmware/RAMNV1 -D ${{ matrix.ecu }}
+            headless-build.sh -data workspace -build RAMNV1/Release -D ${{ matrix.ecu }}
+          " 2>&1 | tee build-output.log
 
       - name: Collect build results
         if: always()
@@ -196,12 +198,12 @@ jobs:
             else
               echo "hex_size=N/A"
             fi
-            # Search for warning count in any build log files
-            warn_count=0
-            while IFS= read -r -d '' logfile; do
-              w=$(grep -ci "warning:" "$logfile" 2>/dev/null || echo 0)
-              warn_count=$((warn_count + w))
-            done < <(find firmware/RAMNV1 -name "*.log" -print0 2>/dev/null)
+            # Count warnings from captured build output
+            if [ -f build-output.log ]; then
+              warn_count=$(grep -ci 'warning:' build-output.log || true)
+            else
+              warn_count=0
+            fi
             echo "warnings=${warn_count}"
           } > macro-results/result.txt
 
