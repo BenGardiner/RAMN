@@ -1,0 +1,48 @@
+name: Copilot Setup Steps
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        spice: [RAMNV1]
+        conf: [Release]
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: Build ECUB
+        uses: xanderhendriks/action-build-stm32cubeide@v7.0
+        with:
+          project-path: firmware/${{ matrix.spice }} -D TARGET_ECUB
+          project-target: ${{ matrix.spice}}/${{ matrix.conf}} -D TARGET_ECUB
+
+      - name: Build ECUC
+        uses: xanderhendriks/action-build-stm32cubeide@v7.0
+        with:
+          project-path: firmware/${{ matrix.spice }} -D TARGET_ECUC
+          project-target: ${{ matrix.spice}}/${{ matrix.conf}} -D TARGET_ECUC
+
+      - name: Build ECUD
+        uses: xanderhendriks/action-build-stm32cubeide@v7.0
+        with:
+          project-path: firmware/${{ matrix.spice }} -D TARGET_ECUD
+          project-target: ${{ matrix.spice}}/${{ matrix.conf}} -D TARGET_ECUD
+
+      - name: Build ECUA
+        uses: xanderhendriks/action-build-stm32cubeide@v7.0
+        with:
+          project-path: firmware/${{ matrix.spice }} -D TARGET_ECUA
+          project-target: ${{ matrix.spice}}/${{ matrix.conf}} -D TARGET_ECUA
