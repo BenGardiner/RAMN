@@ -240,6 +240,10 @@ jobs:
             fi
           fi
 
+      - name: Fail job if build failed
+        if: always() && steps.build.outcome == 'failure'
+        run: exit 1
+
   coverage_report:
     name: Report
     permissions:
@@ -416,3 +420,7 @@ jobs:
       - name: Write step summary
         if: always()
         run: cat report.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail if upstream builds failed
+        if: always() && (needs.build_all.result == 'failure' || needs.macro_coverage.result == 'failure')
+        run: exit 1
