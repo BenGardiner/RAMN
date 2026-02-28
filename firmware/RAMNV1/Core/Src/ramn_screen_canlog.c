@@ -153,6 +153,7 @@ static void SCREENCANLOG_Update(uint32_t tick)
 			for (uint8_t i = 0; i < canMessageBuffer.count; i++)
 			{
 				uint32_t index = (start_index + i) % CAN_MESSAGE_BUFFER_SIZE;
+				// Safe to cast away volatile: access is protected by CANLOG_SEMAPHORE
 				CAN_Message *message = (CAN_Message *)&canMessageBuffer.messages[index];
 				uint8_t tmp[21];
 
