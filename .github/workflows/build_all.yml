@@ -153,13 +153,13 @@ jobs:
           # When GENERATE_RUNTIME_STATS is disabled, also disable the FreeRTOS
           # configGENERATE_RUN_TIME_STATS setting to avoid linker errors from
           # missing timer functions that are guarded by GENERATE_RUNTIME_STATS.
-          for macro in ${{ matrix.disable }}; do
-            if [ "$macro" = "GENERATE_RUNTIME_STATS" ]; then
+          case " ${{ matrix.disable }} " in
+            *" GENERATE_RUNTIME_STATS "*)
               FREERTOS_CONFIG=firmware/RAMNV1/Core/Inc/FreeRTOSConfig.h
-              sed -i 's~#define configGENERATE_RUN_TIME_STATS\s\+1~#define configGENERATE_RUN_TIME_STATS 0~' "$FREERTOS_CONFIG"
+              sed -i 's~#define configGENERATE_RUN_TIME_STATS[[:space:]]*1~#define configGENERATE_RUN_TIME_STATS 0~' "$FREERTOS_CONFIG"
               echo "| Disabled | \`configGENERATE_RUN_TIME_STATS\` (FreeRTOS) |" >> $GITHUB_STEP_SUMMARY
-            fi
-          done
+              ;;
+          esac
 
           # Uncomment //#define lines: handles both "//#define" and "// #define" formats
           # (zero or more spaces between // and #define) with the same word boundary logic.
