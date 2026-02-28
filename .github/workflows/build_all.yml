@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build ECUB
-        uses: xanderhendriks/action-build-stm32cubeide@v7.0
+        uses: ./.github/actions/build-stm32cubeide
         with:
           project-path: firmware/${{ matrix.spice }} -D TARGET_ECUB
           project-target: ${{ matrix.spice}}/${{ matrix.conf}} -D TARGET_ECUB
@@ -30,7 +30,7 @@ jobs:
         run: cp firmware/${{ matrix.spice }}/${{ matrix.conf }}/${{ matrix.spice }}.hex scripts/firmware/ECUB.hex
 
       - name: Build ECUC
-        uses: xanderhendriks/action-build-stm32cubeide@v7.0
+        uses: ./.github/actions/build-stm32cubeide
         with:
           project-path: firmware/${{ matrix.spice }} -D TARGET_ECUC
           project-target: ${{ matrix.spice}}/${{ matrix.conf}} -D TARGET_ECUC
@@ -38,7 +38,7 @@ jobs:
         run: cp firmware/${{ matrix.spice }}/${{ matrix.conf }}/${{ matrix.spice }}.hex scripts/firmware/ECUC.hex
 
       - name: Build ECUD
-        uses: xanderhendriks/action-build-stm32cubeide@v7.0
+        uses: ./.github/actions/build-stm32cubeide
         with:
           project-path: firmware/${{ matrix.spice }} -D TARGET_ECUD
           project-target: ${{ matrix.spice}}/${{ matrix.conf}} -D TARGET_ECUD
@@ -47,7 +47,7 @@ jobs:
 
       - name: Build ECUA
         if: ${{ matrix.spice!='RAMNV1_CTF' }}
-        uses: xanderhendriks/action-build-stm32cubeide@v7.0
+        uses: ./.github/actions/build-stm32cubeide
         with:
           project-path: firmware/${{ matrix.spice }} -D TARGET_ECUA
           project-target: ${{ matrix.spice}}/${{ matrix.conf}} -D TARGET_ECUA
