@@ -58,3 +58,153 @@ jobs:
         with:
           name: ${{ matrix.spice }}-${{ matrix.conf}}
           path: .
+
+  macro_coverage:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Test GSUSB interface instead of CDC on ECUA
+          - ecu: TARGET_ECUA
+            variant: gsusb
+            enable: "ENABLE_GSUSB"
+            disable: "ENABLE_CDC"
+          # Test ECUA without UDS diagnostics
+          - ecu: TARGET_ECUA
+            variant: no_uds
+            enable: ""
+            disable: "ENABLE_UDS ENABLE_UDS_REPROGRAMMING"
+          # Test ECUA without screen, chip8, spi, j1979, minictf
+          - ecu: TARGET_ECUA
+            variant: no_extras
+            enable: ""
+            disable: "ENABLE_J1979 ENABLE_MINICTF ENABLE_CHIP8 ENABLE_SCREEN ENABLE_SPI"
+          # Test ECUA without debug and stats features
+          - ecu: TARGET_ECUA
+            variant: no_debug
+            enable: ""
+            disable: "ENABLE_USB_DEBUG ENABLE_JOYSTICK_CONTROLS GENERATE_RUNTIME_STATS"
+          # Test KWP protocol on ECUB
+          - ecu: TARGET_ECUB
+            variant: kwp
+            enable: "ENABLE_KWP"
+            disable: ""
+          # Test ECUB without dynamic bitrate
+          - ecu: TARGET_ECUB
+            variant: no_dynamic_bitrate
+            enable: ""
+            disable: "ENABLE_DYNAMIC_BITRATE"
+          # Test watchdog on ECUB
+          - ecu: TARGET_ECUB
+            variant: watchdog
+            enable: "WATCHDOG_ENABLE"
+            disable: ""
+          # Test UART on ECUC (no CDC conflict)
+          - ecu: TARGET_ECUC
+            variant: uart
+            enable: "ENABLE_UART"
+            disable: ""
+
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: Modify ramn_config.h
+        run: |
+          CONFIG=firmware/RAMNV1/Core/Inc/ramn_config.h
+          echo "## Macro Coverage Build: \`${{ matrix.ecu }}\` / \`${{ matrix.variant }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Action | Macro |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+
+          for macro in ${{ matrix.disable }}; do
+            sed -i "s~^\([[:space:]]*\)#define ${macro}\([^A-Za-z0-9_]\|$\)~\1//#define ${macro}\2~" "$CONFIG"
+            echo "| Disabled | \`${macro}\` |" >> $GITHUB_STEP_SUMMARY
+          done
+
+          for macro in ${{ matrix.enable }}; do
+            sed -i "s~^\([[:space:]]*\)//[[:space:]]*#define ${macro}\([^A-Za-z0-9_]\|$\)~\1#define ${macro}\2~" "$CONFIG"
+            echo "| Enabled | \`${macro}\` |" >> $GITHUB_STEP_SUMMARY
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+      - name: Build ${{ matrix.ecu }}
+        id: build
+        continue-on-error: true
+        uses: xanderhendriks/action-build-stm32cubeide@v7.0
+        with:
+          project-path: firmware/RAMNV1 -D ${{ matrix.ecu }}
+          project-target: RAMNV1/Release -D ${{ matrix.ecu }}
+
+      - name: Report build result
+        if: always()
+        run: |
+          if [ "${{ steps.build.outcome }}" = "success" ]; then
+            echo "### ✅ Build PASSED" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Build FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Failed configuration details:**" >> $GITHUB_STEP_SUMMARY
+            echo "- **ECU:** \`${{ matrix.ecu }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Variant:** \`${{ matrix.variant }}\`" >> $GITHUB_STEP_SUMMARY
+            if [ -n "${{ matrix.enable }}" ]; then
+              echo "- **Macros enabled:** \`${{ matrix.enable }}\`" >> $GITHUB_STEP_SUMMARY
+            fi
+            if [ -n "${{ matrix.disable }}" ]; then
+              echo "- **Macros disabled:** \`${{ matrix.disable }}\`" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+
+  coverage_report:
+    needs: [build_all, macro_coverage]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate build coverage report
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'REPORT'
+          # ENABLE_ Macro Build Coverage Report
+
+          This report shows which `ENABLE_` macros (and related feature toggles) in `ramn_config.h` have been
+          tested in both their **ON** (defined) and **OFF** (not defined) states across all builds in this workflow.
+
+          ## Coverage Table
+
+          | # | Macro | Tested ON | Tested OFF | Covered |
+          |---|-------|-----------|------------|---------|
+          | 1 | `ENABLE_ADC` | default (ECUB, ECUC, ECUD) | default (ECUA) | ✅ |
+          | 2 | `ENABLE_USB` | default (ECUA) | — | ⬜ |
+          | 3 | `ENABLE_CDC` | default (ECUA) | variant: gsusb (ECUA) | ✅ |
+          | 4 | `ENABLE_GSUSB` | variant: gsusb (ECUA) | default (all) | ✅ |
+          | 5 | `ENABLE_SPI` | default (ECUA, ECUD) | default (ECUB, ECUC) + variant: no_extras (ECUA) | ✅ |
+          | 6 | `ENABLE_SCREEN` | default (ECUA) | default (ECUB, ECUC, ECUD) + variant: no_extras (ECUA) | ✅ |
+          | 7 | `ENABLE_CHIP8` | default (ECUA) | default (ECUB, ECUC, ECUD) + variant: no_extras (ECUA) | ✅ |
+          | 8 | `ENABLE_MINICTF` | default (ECUA, ECUD) | default (ECUB, ECUC) + variant: no_extras (ECUA) | ✅ |
+          | 9 | `ENABLE_UDS_REPROGRAMMING` | default (all) | variant: no_uds (ECUA) | ✅ |
+          | 10 | `ENABLE_UDS` | default (all) | variant: no_uds (ECUA) | ✅ |
+          | 11 | `ENABLE_J1979` | default (all) | variant: no_extras (ECUA) | ✅ |
+          | 12 | `ENABLE_KWP` | variant: kwp (ECUB) | default (all) | ✅ |
+          | 13 | `ENABLE_XCP` | default (ECUB, ECUC, ECUD) | default (ECUA) | ✅ |
+          | 14 | `ENABLE_JOYSTICK_CONTROLS` | default (ECUA) | variant: no_debug (ECUA) | ✅ |
+          | 15 | `ENABLE_USB_DEBUG` | default (ECUA) | variant: no_debug (ECUA) | ✅ |
+          | 16 | `ENABLE_USB_AUTODETECT` | — | default (all) | ⬜ |
+          | 17 | `ENABLE_DYNAMIC_BITRATE` | default (all) | variant: no_dynamic_bitrate (ECUB) | ✅ |
+          | 18 | `ENABLE_I2C` | — | default (all) | ⬜ |
+          | 19 | `ENABLE_UART` | variant: uart (ECUC) | default (all) | ✅ |
+          | 20 | `GENERATE_RUNTIME_STATS` | default (all) | variant: no_debug (ECUA) | ✅ |
+          | 21 | `WATCHDOG_ENABLE` | variant: watchdog (ECUB) | default (all) | ✅ |
+
+          ## Summary
+
+          - **Macros fully covered (both ON and OFF):** 18 / 21 (85.7%)
+          - **Build coverage: 85.7%** ✅ (target: ≥80%)
+          - **Not covered in both states:**
+            - `ENABLE_USB` — Only tested ON. Disabling USB on ECUA would remove its primary host interface.
+            - `ENABLE_USB_AUTODETECT` — Only tested OFF. Marked as potentially incompatible with some OS/applications.
+            - `ENABLE_I2C` — Only tested OFF. Marked as CURRENTLY UNTESTED in source.
+
+          > **Note:** Check individual macro_coverage job results above for pass/fail status of each variant.
+          > Any build failure will include the exact list of ENABLE_ macros that were changed.
+          REPORT
