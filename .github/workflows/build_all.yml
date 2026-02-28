@@ -185,10 +185,7 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          docker run --rm -v "$GITHUB_WORKSPACE:/github/workspace" -w /github/workspace xanderhendriks/stm32cubeide:7.0 bash -c "
-            stm32cubeide --launcher.suppressErrors -nosplash -application org.eclipse.cdt.managedbuilder.core.headlessbuild -data workspace -import firmware/RAMNV1 -D ${{ matrix.ecu }}
-            headless-build.sh -data workspace -build RAMNV1/Release -D ${{ matrix.ecu }}
-          " 2>&1 | tee build-output.log
+          bash scripts/build/docker_Clean_BUILD_Release.sh 2>&1 | tee build-output.log
 
       - name: Collect build results
         if: always()
@@ -200,7 +197,9 @@ jobs:
             echo "enable=${{ matrix.enable }}"
             echo "disable=${{ matrix.disable }}"
             echo "outcome=${{ steps.build.outcome }}"
-            hex="firmware/RAMNV1/Release/RAMNV1.hex"
+            ecu_name="${{ matrix.ecu }}"
+            ecu_name="${ecu_name#TARGET_}"
+            hex="scripts/firmware/${ecu_name}.hex"
             if [ -f "$hex" ]; then
               echo "hex_size=$(wc -c < "$hex" | tr -d ' ')"
             else
