@@ -32,9 +32,15 @@ def parse_hex_sizes(metrics_dir):
         txt = os.path.join(d, "hex-sizes.txt")
         if not os.path.isfile(txt):
             continue
-        # directory name like build-metrics-RAMNV1-Release
-        conf = entry.rsplit("-", 1)[-1]
-        if conf not in sizes:
+        # directory name like build-metrics-RAMNV1-Release-15.0
+        # Extract conf by finding a known config name in the segments
+        parts = entry.split("-")
+        conf = None
+        for p in parts:
+            if p in sizes:
+                conf = p
+                break
+        if conf is None:
             continue
         with open(txt) as f:
             for line in f:
