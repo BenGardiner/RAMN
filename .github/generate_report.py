@@ -33,14 +33,12 @@ def parse_hex_sizes(metrics_dir):
         if not os.path.isfile(txt):
             continue
         # directory name like build-metrics-RAMNV1-Release-15.0
-        # Extract conf by finding a known config name in the segments
+        # conf is the second-to-last segment (before the version number)
         parts = entry.split("-")
-        conf = None
-        for p in parts:
-            if p in sizes:
-                conf = p
-                break
-        if conf is None:
+        if len(parts) < 2:
+            continue
+        conf = parts[-2]
+        if conf not in sizes:
             continue
         with open(txt) as f:
             for line in f:
