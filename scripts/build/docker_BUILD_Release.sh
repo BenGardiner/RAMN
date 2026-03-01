@@ -20,6 +20,6 @@ if [ -e /workspace ]; then
 fi
 
 STM32CUBEIDEWORKSPACE="$( cd "${SCRIPT_DIR}/../../" ; pwd )"
-DOCKER_STM32CUBEIDE_VERSION=7.0 # see https://github.com/xanderhendriks/action-build-stm32cubeide#stm32-cube-ide-versions
+source "${SCRIPT_DIR}/_version.sh"
 
-( cd "${STM32CUBEIDEWORKSPACE}"; docker run --rm -v .:/workspace xanderhendriks/stm32cubeide:${DOCKER_STM32CUBEIDE_VERSION} /workspace/scripts/build/docker_BUILD_Release.sh ) || exit 1
+( cd "${STM32CUBEIDEWORKSPACE}"; docker run --rm -e STM32_IMPORT_FLAG -v .:/workspace xanderhendriks/stm32cubeide:${DOCKER_STM32CUBEIDE_VERSION} /workspace/scripts/build/docker_BUILD_Release.sh ) || exit 1

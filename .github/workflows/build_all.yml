@@ -7,7 +7,7 @@ on:
 
 jobs:
   build_all:
-    name: ${{ matrix.conf }}
+    name: ${{ matrix.conf }} (v${{ matrix.cubeide_version }})
     permissions:
       contents: read
     strategy:
@@ -15,6 +15,7 @@ jobs:
       matrix:
         spice: [RAMNV1]
         conf: [Release, Debug]
+        cubeide_version: ["7.0", "15.0"]
 
     runs-on: ubuntu-latest
     steps:
@@ -22,23 +23,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build all ECUs (${{ matrix.conf }})
+        env:
+          DOCKER_STM32CUBEIDE_VERSION: ${{ matrix.cubeide_version }}
         run: |
-          chmod +x scripts/build/_build_ecu.sh
-          docker run --rm -v "$(pwd)":/workspace xanderhendriks/stm32cubeide:7.0 bash -c '
-            set -e
-            CONF='"'"'${{ matrix.conf }}'"'"'
-            OUTPUT_FOLDER="/workspace/scripts/firmware"
-            PROJECT_NAME=RAMNV1
-            mkdir -p "${OUTPUT_FOLDER}"
-            bash /workspace/scripts/build/_build_ecu.sh TARGET_ECUA "${CONF}"
-            cp -pr "/workspace/firmware/${PROJECT_NAME}/${CONF}/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/ECUA.hex"
-            bash /workspace/scripts/build/_build_ecu.sh TARGET_ECUB "${CONF}" --skip-import
-            cp -pr "/workspace/firmware/${PROJECT_NAME}/${CONF}/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/ECUB.hex"
-            bash /workspace/scripts/build/_build_ecu.sh TARGET_ECUC "${CONF}" --skip-import
-            cp -pr "/workspace/firmware/${PROJECT_NAME}/${CONF}/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/ECUC.hex"
-            bash /workspace/scripts/build/_build_ecu.sh TARGET_ECUD "${CONF}" --skip-import
-            cp -pr "/workspace/firmware/${PROJECT_NAME}/${CONF}/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/ECUD.hex"
-          '
+          chmod +x scripts/build/docker_BUILD_Clean_${{ matrix.conf }}.sh scripts/build/_build_ecu.sh
+          bash scripts/build/docker_BUILD_Clean_${{ matrix.conf }}.sh
 
       - name: Collect hex file sizes
         if: always()
@@ -57,14 +46,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-metrics-${{ matrix.spice }}-${{ matrix.conf }}
+          name: build-metrics-${{ matrix.spice }}-${{ matrix.conf }}-${{ matrix.cubeide_version }}
           path: build-metrics/
 
       - name: upload RAMN dir as artifact
         if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.spice }}-${{ matrix.conf}}
+          name: ${{ matrix.spice }}-${{ matrix.conf}}-${{ matrix.cubeide_version }}
           path: .
 
   macro_coverage:
@@ -127,7 +116,8 @@ jobs:
         run: |
           set -o pipefail
           chmod +x scripts/build/_build_ecu.sh
-          docker run --rm -v "$(pwd)":/workspace xanderhendriks/stm32cubeide:7.0 bash -c '
+          source scripts/build/_version.sh
+          docker run --rm -e STM32_IMPORT_FLAG -v "$(pwd)":/workspace xanderhendriks/stm32cubeide:${DOCKER_STM32CUBEIDE_VERSION} bash -c '
             set -e
             ECU='"'"'${{ matrix.ecu }}'"'"'
             OUTPUT_FOLDER="/workspace/scripts/firmware"
