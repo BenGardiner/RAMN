@@ -17,13 +17,22 @@ done
 
 if [ -e /workspace ]; then
 	set -e
+	OUTPUT_FOLDER="/workspace/scripts/firmware"
+	PROJECT_NAME=RAMNV1
+	mkdir -p "${OUTPUT_FOLDER}"
 	if [ -n "$ECU_ARG" ]; then
+		ECU_NAME="${ECU_ARG#TARGET_}"
 		bash "${SCRIPT_DIR}/_build_ecu.sh" "$ECU_ARG" "$CONF" --no-clean
+		cp -pr "/workspace/firmware/${PROJECT_NAME}/${CONF}/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/${ECU_NAME}.hex"
 	else
 		bash "${SCRIPT_DIR}/_build_ecu.sh" TARGET_ECUA "$CONF" --no-clean
+		cp -pr "/workspace/firmware/${PROJECT_NAME}/${CONF}/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/ECUA.hex"
 		bash "${SCRIPT_DIR}/_build_ecu.sh" TARGET_ECUB "$CONF" --skip-import --no-clean
+		cp -pr "/workspace/firmware/${PROJECT_NAME}/${CONF}/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/ECUB.hex"
 		bash "${SCRIPT_DIR}/_build_ecu.sh" TARGET_ECUC "$CONF" --skip-import --no-clean
+		cp -pr "/workspace/firmware/${PROJECT_NAME}/${CONF}/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/ECUC.hex"
 		bash "${SCRIPT_DIR}/_build_ecu.sh" TARGET_ECUD "$CONF" --skip-import --no-clean
+		cp -pr "/workspace/firmware/${PROJECT_NAME}/${CONF}/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/ECUD.hex"
 	fi
 	exit 0
 fi
