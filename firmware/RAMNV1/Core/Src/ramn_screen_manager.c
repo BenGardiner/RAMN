@@ -107,11 +107,7 @@ void RAMN_SCREENMANAGER_Update(uint32_t tick)
 	}
 #endif
 
-#ifdef ENABLE_JOYSTICK_CONTROLS
 	joystickEvent = RAMN_Joystick_Pop();
-#else
-	joystickEvent = JOYSTICK_EVENT_NONE;
-#endif
 
 	while (joystickEvent != JOYSTICK_EVENT_NONE)
 	{
@@ -125,11 +121,7 @@ void RAMN_SCREENMANAGER_Update(uint32_t tick)
 			else if (joystickEvent == JOYSTICK_EVENT_LEFT_PRESSED) changeScreenLeft();
 		}
 
-#ifdef ENABLE_JOYSTICK_CONTROLS
 		joystickEvent = RAMN_Joystick_Pop(); // Get next event
-#else
-		joystickEvent = JOYSTICK_EVENT_NONE;
-#endif
 
 	}
 
