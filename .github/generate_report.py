@@ -347,7 +347,7 @@ def main():
 
     with open(args.output, "w") as f:
         f.write("<!-- build-coverage-report -->\n")
-        f.write("# \U0001f528 Build & Macro Coverage Report\n\n")
+        f.write("# 🔨 Build & Macro Coverage Report\n\n")
         f.write("## Default Builds \u2014 Hex File Sizes\n\n")
         f.write(hex_size_table(sizes) + "\n\n")
         f.write("## Macro Coverage Build Results\n\n")

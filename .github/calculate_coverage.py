@@ -9,7 +9,9 @@ Usage: python3 calculate_coverage.py [config_path] [src_dir]
 Output: key=value pairs (total_lines, compiled_lines, coverage_pct)
 """
 
-import re, glob, os
+import glob
+import os
+import re
 
 
 def parse_config(path):
