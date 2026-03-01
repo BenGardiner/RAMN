@@ -185,8 +185,8 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          chmod +x scripts/build/docker_Clean_BUILD_Release.sh
-          bash scripts/build/docker_Clean_BUILD_Release.sh 2>&1 | tee build-output.log
+          chmod +x scripts/build/docker_Clean_BUILD_Release_ECU.sh
+          bash scripts/build/docker_Clean_BUILD_Release_ECU.sh ${{ matrix.ecu }} 2>&1 | tee build-output.log
 
       - name: Collect build results
         if: always()
