@@ -50,6 +50,20 @@ jobs:
       - name: Copy ECUA hex
         if: ${{ matrix.spice!='RAMNV1_CTF' }}
         run: cp firmware/${{ matrix.spice }}/${{ matrix.conf }}/${{ matrix.spice }}.hex scripts/firmware/ECUA.hex
+
+      - name: Build ECUA with GSUSB
+        if: ${{ matrix.spice!='RAMNV1_CTF' }}
+        uses: xanderhendriks/action-build-stm32cubeide@v7.0
+        with:
+          project-path: firmware/${{ matrix.spice }} -D TARGET_ECUA -D ENABLE_GSUSB
+          project-target: ${{ matrix.spice}}/${{ matrix.conf}} -D TARGET_ECUA -D ENABLE_GSUSB
+
+      - name: Build ECUA with GSUSB and CANFD
+        if: ${{ matrix.spice!='RAMNV1_CTF' }}
+        uses: xanderhendriks/action-build-stm32cubeide@v7.0
+        with:
+          project-path: firmware/${{ matrix.spice }} -D TARGET_ECUA -D ENABLE_GSUSB -D ENABLE_GSUSB_CANFD
+          project-target: ${{ matrix.spice}}/${{ matrix.conf}} -D TARGET_ECUA -D ENABLE_GSUSB -D ENABLE_GSUSB_CANFD
       
 
       - name: upload RAMN dir as artifact
