@@ -8,6 +8,7 @@ file to determine which lines are compiled in at least one configuration.
 Usage: python3 calculate_coverage.py [config_path] [src_dir]
 Output: key=value pairs (total_lines, compiled_lines, coverage_pct)
 """
+
 import re, glob, os
 
 
@@ -15,8 +16,9 @@ def parse_config(path):
     """Parse ramn_config.h to extract active #define macros per ECU target."""
     with open(path) as f:
         lines = f.readlines()
-    targets = {t: set() for t in
-               ["TARGET_ECUA", "TARGET_ECUB", "TARGET_ECUC", "TARGET_ECUD"]}
+    targets = {
+        t: set() for t in ["TARGET_ECUA", "TARGET_ECUB", "TARGET_ECUC", "TARGET_ECUD"]
+    }
     common = set()
     current_target = None
     depth = 0
@@ -24,25 +26,25 @@ def parse_config(path):
     guard_depth = 0
     for line in lines:
         s = line.strip()
-        if re.match(r'#\s*(?:ifdef|ifndef|if)\b', s):
+        if re.match(r"#\s*(?:ifdef|ifndef|if)\b", s):
             depth += 1
             # Skip the include guard (#ifndef INC_RAMN_CONFIG_H_)
-            if depth == 1 and re.match(r'#\s*ifndef\s+INC_', s):
+            if depth == 1 and re.match(r"#\s*ifndef\s+INC_", s):
                 guard_depth = 1
             elif current_target is None:
                 for t in targets:
-                    if t in s and 'defined' in s and '!' not in s:
+                    if t in s and "defined" in s and "!" not in s:
                         current_target = t
                         target_depth = depth
                         break
-        elif s.startswith('#endif'):
+        elif s.startswith("#endif"):
             if current_target and depth == target_depth:
                 current_target = None
             depth = max(depth - 1, 0)
-        m = re.match(r'#\s*define\s+(\w+)', s)
+        m = re.match(r"#\s*define\s+(\w+)", s)
         if m:
             macro = m.group(1)
-            if macro.startswith('INC_'):
+            if macro.startswith("INC_"):
                 continue
             if current_target:
                 targets[current_target].add(macro)
@@ -81,14 +83,13 @@ def eval_cond(expr, defs):
     comparisons involving macro values like LED_TEST_DURATION_MS > 0),
     which is conservative — assumes the code is compiled.
     """
-    e = re.sub(r'defined\s*\(\s*(\w+)\s*\)',
-               lambda m: '1' if m.group(1) in defs else '0', expr)
-    e = re.sub(r'defined\s+(\w+)',
-               lambda m: '1' if m.group(1) in defs else '0', e)
-    e = e.replace('||', ' or ').replace('&&', ' and ')
-    e = re.sub(r'!\s*\(', 'not (', e)
-    e = re.sub(r'!(?!=)\s*([01])',
-               lambda m: '1' if m.group(1) == '0' else '0', e)
+    e = re.sub(
+        r"defined\s*\(\s*(\w+)\s*\)", lambda m: "1" if m.group(1) in defs else "0", expr
+    )
+    e = re.sub(r"defined\s+(\w+)", lambda m: "1" if m.group(1) in defs else "0", e)
+    e = e.replace("||", " or ").replace("&&", " and ")
+    e = re.sub(r"!\s*\(", "not (", e)
+    e = re.sub(r"!(?!=)\s*([01])", lambda m: "1" if m.group(1) == "0" else "0", e)
     try:
         return bool(eval(e))
     except (SyntaxError, NameError, TypeError, ValueError):
@@ -108,36 +109,35 @@ def coverage(files, all_configs):
             st = [(True, True, True)]
             for i, line in enumerate(flines, 1):
                 s = line.strip()
-                if re.match(r'#\s*ifdef\s', s):
+                if re.match(r"#\s*ifdef\s", s):
                     p = st[-1][0] and st[-1][1]
-                    macro = s.split()[1] if len(s.split()) > 1 else ''
+                    macro = s.split()[1] if len(s.split()) > 1 else ""
                     a = macro in defs
                     st.append((p, p and a, a))
-                elif re.match(r'#\s*ifndef\s', s):
+                elif re.match(r"#\s*ifndef\s", s):
                     p = st[-1][0] and st[-1][1]
-                    macro = s.split()[1] if len(s.split()) > 1 else ''
+                    macro = s.split()[1] if len(s.split()) > 1 else ""
                     a = macro not in defs
                     st.append((p, p and a, a))
-                elif re.match(r'#\s*if\s', s) and \
-                        not re.match(r'#\s*if(n?)def\s', s):
+                elif re.match(r"#\s*if\s", s) and not re.match(r"#\s*if(n?)def\s", s):
                     p = st[-1][0] and st[-1][1]
-                    expr = re.sub(r'^#\s*if\s+', '', s)
+                    expr = re.sub(r"^#\s*if\s+", "", s)
                     a = eval_cond(expr, defs) if p else False
                     st.append((p, p and a, a))
-                elif re.match(r'#\s*elif\s', s):
+                elif re.match(r"#\s*elif\s", s):
                     if len(st) > 1:
                         p, _, taken = st.pop()
                         if not taken and p:
-                            expr = re.sub(r'^#\s*elif\s+', '', s)
+                            expr = re.sub(r"^#\s*elif\s+", "", s)
                             a = eval_cond(expr, defs)
                         else:
                             a = False
                         st.append((p, p and a, taken or a))
-                elif re.match(r'#\s*else\b', s):
+                elif re.match(r"#\s*else\b", s):
                     if len(st) > 1:
                         p, _, taken = st.pop()
                         st.append((p, p and not taken, True))
-                elif re.match(r'#\s*endif\b', s):
+                elif re.match(r"#\s*endif\b", s):
                     if len(st) > 1:
                         st.pop()
                 else:
@@ -148,33 +148,38 @@ def coverage(files, all_configs):
 
 def main():
     import sys
-    config_path = sys.argv[1] if len(sys.argv) > 1 else \
-        'firmware/RAMNV1/Core/Inc/ramn_config.h'
-    src_dir = sys.argv[2] if len(sys.argv) > 2 else \
-        'firmware/RAMNV1/Core/Src'
+
+    config_path = (
+        sys.argv[1] if len(sys.argv) > 1 else "firmware/RAMNV1/Core/Inc/ramn_config.h"
+    )
+    src_dir = sys.argv[2] if len(sys.argv) > 2 else "firmware/RAMNV1/Core/Src"
+    results_dir = sys.argv[3] if len(sys.argv) > 3 else "all-macro-results"
 
     base = parse_config(config_path)
     # 4 default ECU configs
     all_configs = list(base.values())
-    # 8 macro coverage variants (mirrors the workflow matrix)
-    variants = [
-        ("TARGET_ECUA", {"ENABLE_GSUSB"}, {"ENABLE_CDC"}),
-        ("TARGET_ECUA", set(), {"ENABLE_UDS", "ENABLE_UDS_REPROGRAMMING"}),
-        ("TARGET_ECUA", set(),
-         {"ENABLE_J1979", "ENABLE_MINICTF", "ENABLE_CHIP8",
-          "ENABLE_SCREEN", "ENABLE_SPI"}),
-        ("TARGET_ECUA", set(),
-         {"ENABLE_USB_DEBUG", "ENABLE_JOYSTICK_CONTROLS",
-          "GENERATE_RUNTIME_STATS"}),
-        ("TARGET_ECUB", {"ENABLE_KWP"}, set()),
-        ("TARGET_ECUB", set(), {"ENABLE_DYNAMIC_BITRATE"}),
-        ("TARGET_ECUB", {"WATCHDOG_ENABLE"}, set()),
-        ("TARGET_ECUC", {"ENABLE_UART"}, set()),
-    ]
-    for ecu, add, remove in variants:
-        all_configs.append(derive((base[ecu] | add) - remove))
 
-    files = sorted(glob.glob(os.path.join(src_dir, '*.c')))
+    # Read macro coverage variants from macro-results artifacts
+    if os.path.isdir(results_dir):
+        for entry in sorted(os.listdir(results_dir)):
+            txt = os.path.join(results_dir, entry, "result.txt")
+            if not os.path.isfile(txt):
+                continue
+            rec = {}
+            with open(txt) as f:
+                for line in f:
+                    line = line.strip()
+                    if "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    rec[key] = value
+            ecu = rec.get("ecu", "")
+            enable = set(rec.get("enable", "").split()) - {""}
+            disable = set(rec.get("disable", "").split()) - {""}
+            if ecu in base:
+                all_configs.append(derive((base[ecu] | enable) - disable))
+
+    files = sorted(glob.glob(os.path.join(src_dir, "*.c")))
     total, compiled = coverage(files, all_configs)
     pct = round(len(compiled) * 100.0 / total) if total > 0 else 0
     print(f"total_lines={total}")
@@ -182,5 +187,5 @@ def main():
     print(f"coverage_pct={pct}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -23,8 +23,22 @@ jobs:
 
       - name: Build all ECUs (${{ matrix.conf }})
         run: |
-          chmod +x scripts/build/docker_Clean_BUILD_Release.sh scripts/build/_build_ecu.sh
-          bash scripts/build/docker_Clean_BUILD_Release.sh ${{ matrix.conf }}
+          chmod +x scripts/build/_build_ecu.sh
+          docker run --rm -v "$(pwd)":/workspace xanderhendriks/stm32cubeide:7.0 bash -c '
+            set -e
+            CONF='"'"'${{ matrix.conf }}'"'"'
+            OUTPUT_FOLDER="/workspace/scripts/firmware"
+            PROJECT_NAME=RAMNV1
+            mkdir -p "${OUTPUT_FOLDER}"
+            bash /workspace/scripts/build/_build_ecu.sh TARGET_ECUA "${CONF}"
+            cp -pr "/workspace/firmware/${PROJECT_NAME}/${CONF}/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/ECUA.hex"
+            bash /workspace/scripts/build/_build_ecu.sh TARGET_ECUB "${CONF}" --skip-import
+            cp -pr "/workspace/firmware/${PROJECT_NAME}/${CONF}/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/ECUB.hex"
+            bash /workspace/scripts/build/_build_ecu.sh TARGET_ECUC "${CONF}" --skip-import
+            cp -pr "/workspace/firmware/${PROJECT_NAME}/${CONF}/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/ECUC.hex"
+            bash /workspace/scripts/build/_build_ecu.sh TARGET_ECUD "${CONF}" --skip-import
+            cp -pr "/workspace/firmware/${PROJECT_NAME}/${CONF}/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/ECUD.hex"
+          '
 
       - name: Collect hex file sizes
         if: always()
@@ -61,45 +75,34 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Test GSUSB interface instead of CDC on ECUA
           - ecu: TARGET_ECUA
             variant: gsusb
             enable: "ENABLE_GSUSB"
             disable: "ENABLE_CDC"
-          # Test ECUA without UDS diagnostics
           - ecu: TARGET_ECUA
             variant: no_uds
             enable: ""
             disable: "ENABLE_UDS ENABLE_UDS_REPROGRAMMING"
-          # Test ECUA without screen, chip8, spi, j1979, minictf
           - ecu: TARGET_ECUA
             variant: no_extras
             enable: ""
             disable: "ENABLE_J1979 ENABLE_MINICTF ENABLE_CHIP8 ENABLE_SCREEN ENABLE_SPI"
-          # Test ECUA without debug and stats features
-          # ENABLE_SCREEN must also be disabled because ramn_screen_manager.c
-          # calls RAMN_Joystick_Pop() which requires ENABLE_JOYSTICK_CONTROLS.
-          # ENABLE_CHIP8 must be disabled because it requires ENABLE_SCREEN.
           - ecu: TARGET_ECUA
             variant: no_debug
             enable: ""
             disable: "ENABLE_USB_DEBUG ENABLE_JOYSTICK_CONTROLS ENABLE_SCREEN ENABLE_CHIP8 GENERATE_RUNTIME_STATS"
-          # Test KWP protocol on ECUB
           - ecu: TARGET_ECUB
             variant: kwp
             enable: "ENABLE_KWP"
             disable: ""
-          # Test ECUB without dynamic bitrate
           - ecu: TARGET_ECUB
             variant: no_dynamic_bitrate
             enable: ""
             disable: "ENABLE_DYNAMIC_BITRATE"
-          # Test watchdog on ECUB
           - ecu: TARGET_ECUB
             variant: watchdog
             enable: "WATCHDOG_ENABLE"
             disable: ""
-          # Test UART on ECUC (no CDC conflict)
           - ecu: TARGET_ECUC
             variant: uart
             enable: "ENABLE_UART"
@@ -112,52 +115,28 @@ jobs:
 
       - name: Modify ramn_config.h
         run: |
-          CONFIG=firmware/RAMNV1/Core/Inc/ramn_config.h
-          echo "## Macro Coverage Build: \`${{ matrix.ecu }}\` / \`${{ matrix.variant }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Action | Macro |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-
-          # Comment out #define lines: matches "#define MACRO" with word boundary
-          # to avoid partial matches (e.g. ENABLE_UDS won't match ENABLE_UDS_REPROGRAMMING).
-          # Uses [^A-Za-z0-9_] or end-of-line as word boundary after the macro name.
-          for macro in ${{ matrix.disable }}; do
-            sed -i "s~^\([[:space:]]*\)#define ${macro}\([^A-Za-z0-9_]\|$\)~\1//#define ${macro}\2~" "$CONFIG"
-            echo "| Disabled | \`${macro}\` |" >> $GITHUB_STEP_SUMMARY
-          done
-
-          # When GENERATE_RUNTIME_STATS is disabled, also disable the FreeRTOS
-          # configGENERATE_RUN_TIME_STATS setting AND remove the port timer
-          # macros to avoid linker errors. portCONFIGURE_TIMER_FOR_RUN_TIME_STATS
-          # is called unconditionally in tasks.c (line ~2069), so if the macro
-          # is defined it must resolve to a real function. Commenting it out
-          # makes FreeRTOS use its default (empty) fallback.
-          case " ${{ matrix.disable }} " in
-            *" GENERATE_RUNTIME_STATS "*)
-              FREERTOS_CONFIG=firmware/RAMNV1/Core/Inc/FreeRTOSConfig.h
-              sed -i 's~#define configGENERATE_RUN_TIME_STATS[[:space:]]*1~#define configGENERATE_RUN_TIME_STATS 0~' "$FREERTOS_CONFIG"
-              sed -i 's~^#define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS~// #define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS~' "$FREERTOS_CONFIG"
-              sed -i 's~^#define portGET_RUN_TIME_COUNTER_VALUE~// #define portGET_RUN_TIME_COUNTER_VALUE~' "$FREERTOS_CONFIG"
-              echo "| Disabled | \`configGENERATE_RUN_TIME_STATS\` (FreeRTOS) |" >> $GITHUB_STEP_SUMMARY
-              ;;
-          esac
-
-          # Uncomment //#define lines: handles both "//#define" and "// #define" formats
-          # (zero or more spaces between // and #define) with the same word boundary logic.
-          for macro in ${{ matrix.enable }}; do
-            sed -i "s~^\([[:space:]]*\)//[[:space:]]*#define ${macro}\([^A-Za-z0-9_]\|$\)~\1#define ${macro}\2~" "$CONFIG"
-            echo "| Enabled | \`${macro}\` |" >> $GITHUB_STEP_SUMMARY
-          done
-
-          echo "" >> $GITHUB_STEP_SUMMARY
+          python3 .github/modify_config.py \
+            --ecu "${{ matrix.ecu }}" \
+            --variant "${{ matrix.variant }}" \
+            --enable "${{ matrix.enable }}" \
+            --disable "${{ matrix.disable }}"
 
       - name: Build ${{ matrix.ecu }}
         id: build
         continue-on-error: true
         run: |
           set -o pipefail
-          chmod +x scripts/build/docker_Clean_BUILD_Release.sh scripts/build/_build_ecu.sh
-          bash scripts/build/docker_Clean_BUILD_Release.sh ${{ matrix.ecu }} 2>&1 | tee build-output.log
+          chmod +x scripts/build/_build_ecu.sh
+          docker run --rm -v "$(pwd)":/workspace xanderhendriks/stm32cubeide:7.0 bash -c '
+            set -e
+            ECU='"'"'${{ matrix.ecu }}'"'"'
+            OUTPUT_FOLDER="/workspace/scripts/firmware"
+            PROJECT_NAME=RAMNV1
+            mkdir -p "${OUTPUT_FOLDER}"
+            bash /workspace/scripts/build/_build_ecu.sh "${ECU}" Release
+            ECU_NAME="${ECU#TARGET_}"
+            cp -pr "/workspace/firmware/${PROJECT_NAME}/Release/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/${ECU_NAME}.hex"
+          ' 2>&1 | tee build-output.log
 
       - name: Collect build results
         if: always()
@@ -177,7 +156,6 @@ jobs:
             else
               echo "hex_size=N/A"
             fi
-            # Count warnings from captured build output
             if [ -f build-output.log ]; then
               warn_count=$(grep -ci 'warning:' build-output.log || true)
             else
@@ -245,7 +223,10 @@ jobs:
       - name: Calculate .c line coverage
         id: line_coverage
         run: |
-          python3 .github/calculate_coverage.py > coverage_output.txt
+          python3 .github/calculate_coverage.py \
+            firmware/RAMNV1/Core/Inc/ramn_config.h \
+            firmware/RAMNV1/Core/Src \
+            all-macro-results > coverage_output.txt
           cat coverage_output.txt
           while IFS='=' read -r key value; do
             echo "${key}=${value}" >> "$GITHUB_OUTPUT"
@@ -253,111 +234,13 @@ jobs:
 
       - name: Generate report
         run: |
-          total_lines="${{ steps.line_coverage.outputs.total_lines }}"
-          compiled_lines="${{ steps.line_coverage.outputs.compiled_lines }}"
-          coverage_pct="${{ steps.line_coverage.outputs.coverage_pct }}"
-
-          # --- Build the report ---
-          {
-            echo "<!-- build-coverage-report -->"
-            echo "# 🔨 Build & Macro Coverage Report"
-            echo ""
-            echo "## Default Builds — Hex File Sizes"
-            echo ""
-            echo "| ECU | Release | Debug |"
-            echo "|-----|---------|-------|"
-
-            # Parse hex sizes from build-metrics artifacts
-            declare -A rel dbg
-            for ecu in ECUA ECUB ECUC ECUD; do
-              rel[$ecu]="N/A"; dbg[$ecu]="N/A"
-            done
-            for d in all-build-metrics/build-metrics-*/; do
-              [ -d "$d" ] || continue
-              [ -f "${d}hex-sizes.txt" ] || continue
-              conf="${d##*-}"; conf="${conf%/}"
-              while IFS='=' read -r ecu size; do
-                [ "$conf" = "Release" ] && rel[$ecu]="$size" || dbg[$ecu]="$size"
-              done < "${d}hex-sizes.txt"
-            done
-            for ecu in ECUA ECUB ECUC ECUD; do
-              r="${rel[$ecu]}"; d="${dbg[$ecu]}"
-              if [ "$r" != "N/A" ] && [ -n "$r" ]; then
-                r="$((r / 1024)) KiB ($r bytes)"
-              fi
-              if [ "$d" != "N/A" ] && [ -n "$d" ]; then
-                d="$((d / 1024)) KiB ($d bytes)"
-              fi
-              echo "| ${ecu} | ${r} | ${d} |"
-            done
-
-            echo ""
-            echo "## Macro Coverage Build Results"
-            echo ""
-            echo "| ECU | Variant | Macros Changed | Result | Hex Size | Warnings |"
-            echo "|-----|---------|----------------|--------|----------|----------|"
-
-            # Parse results from macro-results artifacts
-            for rd in all-macro-results/macro-results-*/; do
-              [ -f "${rd}result.txt" ] || continue
-              ecu="" variant="" enable="" disable="" outcome="" hex_size="" warnings=""
-              while IFS='=' read -r key value; do
-                case "$key" in
-                  ecu) ecu="$value" ;; variant) variant="$value" ;;
-                  enable) enable="$value" ;; disable) disable="$value" ;;
-                  outcome) outcome="$value" ;; hex_size) hex_size="$value" ;;
-                  warnings) warnings="$value" ;;
-                esac
-              done < "${rd}result.txt"
-              mc=""
-              for m in $enable; do mc="${mc}+\`${m}\` "; done
-              for m in $disable; do mc="${mc}−\`${m}\` "; done
-              [ "$outcome" = "success" ] && res="✅ Pass" || res="❌ Fail"
-              if [ "$hex_size" != "N/A" ] && [ -n "$hex_size" ]; then
-                hf="$((hex_size / 1024)) KiB"
-              else
-                hf="N/A"
-              fi
-              [ -z "$warnings" ] && wf="0" || wf="$warnings"
-              echo "| \`${ecu#TARGET_}\` | ${variant} | ${mc} | ${res} | ${hf} | ${wf} |"
-            done
-
-            echo ""
-            echo "## Source Code Compile Coverage"
-            echo ""
-            echo "- **Total .c source lines:** ${total_lines}"
-            echo "- **Lines compiled in ≥1 configuration:** ${compiled_lines} (~${coverage_pct}%)"
-            echo "- **ENABLE_ macro coverage:** 18/21 (85.7%) macros tested in both ON and OFF states"
-            echo ""
-            echo "<details>"
-            echo "<summary>Full ENABLE_ Macro Coverage Table</summary>"
-            echo ""
-            echo "| # | Macro | Tested ON | Tested OFF | Covered |"
-            echo "|---|-------|-----------|------------|---------|"
-            echo "| 1 | \`ENABLE_ADC\` | default (ECUB, ECUC, ECUD) | default (ECUA) | ✅ |"
-            echo "| 2 | \`ENABLE_USB\` | default (ECUA) | — | ⬜ |"
-            echo "| 3 | \`ENABLE_CDC\` | default (ECUA) | variant: gsusb (ECUA) | ✅ |"
-            echo "| 4 | \`ENABLE_GSUSB\` | variant: gsusb (ECUA) | default (all) | ✅ |"
-            echo "| 5 | \`ENABLE_SPI\` | default (ECUA, ECUD) | default (ECUB, ECUC) | ✅ |"
-            echo "| 6 | \`ENABLE_SCREEN\` | default (ECUA) | variant: no_debug (ECUA) | ✅ |"
-            echo "| 7 | \`ENABLE_CHIP8\` | default (ECUA) | variant: no_debug (ECUA) | ✅ |"
-            echo "| 8 | \`ENABLE_MINICTF\` | default (ECUA, ECUD) | default (ECUB, ECUC) | ✅ |"
-            echo "| 9 | \`ENABLE_UDS_REPROGRAMMING\` | default (all) | variant: no_uds (ECUA) | ✅ |"
-            echo "| 10 | \`ENABLE_UDS\` | default (all) | variant: no_uds (ECUA) | ✅ |"
-            echo "| 11 | \`ENABLE_J1979\` | default (all) | variant: no_extras (ECUA) | ✅ |"
-            echo "| 12 | \`ENABLE_KWP\` | variant: kwp (ECUB) | default (all) | ✅ |"
-            echo "| 13 | \`ENABLE_XCP\` | default (ECUB, ECUC, ECUD) | default (ECUA) | ✅ |"
-            echo "| 14 | \`ENABLE_JOYSTICK_CONTROLS\` | default (ECUA) | variant: no_debug (ECUA) | ✅ |"
-            echo "| 15 | \`ENABLE_USB_DEBUG\` | default (ECUA) | variant: no_debug (ECUA) | ✅ |"
-            echo "| 16 | \`ENABLE_USB_AUTODETECT\` | — | default (all) | ⬜ |"
-            echo "| 17 | \`ENABLE_DYNAMIC_BITRATE\` | default (all) | variant: no_dynamic_bitrate (ECUB) | ✅ |"
-            echo "| 18 | \`ENABLE_I2C\` | — | default (all) | ⬜ |"
-            echo "| 19 | \`ENABLE_UART\` | variant: uart (ECUC) | default (all) | ✅ |"
-            echo "| 20 | \`GENERATE_RUNTIME_STATS\` | default (all) | variant: no_debug (ECUA) | ✅ |"
-            echo "| 21 | \`WATCHDOG_ENABLE\` | variant: watchdog (ECUB) | default (all) | ✅ |"
-            echo ""
-            echo "</details>"
-          } > report.md
+          python3 .github/generate_report.py \
+            --metrics-dir all-build-metrics \
+            --results-dir all-macro-results \
+            --config firmware/RAMNV1/Core/Inc/ramn_config.h \
+            --total-lines "${{ steps.line_coverage.outputs.total_lines }}" \
+            --compiled-lines "${{ steps.line_coverage.outputs.compiled_lines }}" \
+            --coverage-pct "${{ steps.line_coverage.outputs.coverage_pct }}"
 
       - name: Post PR comment
         if: github.event_name == 'pull_request'
