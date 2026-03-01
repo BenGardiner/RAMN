@@ -33,8 +33,10 @@ def parse_hex_sizes(metrics_dir):
         if not os.path.isfile(txt):
             continue
         # directory name like build-metrics-RAMNV1-Release-15.0
+        if not entry.startswith("build-metrics-"):
+            continue
         parts = entry.split("-")
-        if len(parts) < 3:
+        if len(parts) < 5:
             continue
         tag = parts[-1]
         conf = parts[-2]
