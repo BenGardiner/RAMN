@@ -62,6 +62,9 @@ THE SOFTWARE.
 #define GS_CAN_FEATURE_FD                       (1<<8)
 
 #define GS_CAN_FLAG_OVERFLOW 1
+#define GS_CAN_FLAG_FD       (1<<1)
+#define GS_CAN_FLAG_BRS      (1<<2)
+#define GS_CAN_FLAG_ESI      (1<<3)
 
 #define CAN_EFF_FLAG 0x80000000U /* EFF/SFF is set in the MSB */
 #define CAN_RTR_FLAG 0x40000000U /* remote transmission request */

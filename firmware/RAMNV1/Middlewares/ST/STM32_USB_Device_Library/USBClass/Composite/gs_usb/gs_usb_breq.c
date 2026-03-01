@@ -83,6 +83,7 @@ void breq_set_mode(USBD_GS_CAN_HandleTypeDef *hcan, USBD_SetupReqTypedef *req)
 	}
 	else if (mode->mode == GS_CAN_MODE_START)
 	{
+		hcan->enable_fdcan = (mode->flags & GS_CAN_MODE_FD) != 0;
 		FDCAN_InitQueues(hcan);
 		hcan->timestamps_enabled = (mode->flags & GS_CAN_MODE_HW_TIMESTAMP) != 0;
 		hcan->pad_pkts_to_max_pkt_size = (mode->flags & GS_CAN_MODE_PAD_PKTS_TO_MAX_PKT_SIZE) != 0;

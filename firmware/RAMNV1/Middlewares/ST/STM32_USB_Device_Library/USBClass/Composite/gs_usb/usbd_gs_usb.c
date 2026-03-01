@@ -64,7 +64,8 @@ const struct gs_device_bt_const gscan_btconst = {
 		| GS_CAN_FEATURE_HW_TIMESTAMP
 		| GS_CAN_FEATURE_IDENTIFY
 		| GS_CAN_FEATURE_USER_ID
-		| GS_CAN_FEATURE_PAD_PKTS_TO_MAX_PKT_SIZE,
+		| GS_CAN_FEATURE_PAD_PKTS_TO_MAX_PKT_SIZE
+		| GS_CAN_FEATURE_FD,
 		48000000, // can timing base clock
 		1,        // tseg1 min
 		16,       // tseg1 max
@@ -412,16 +413,19 @@ void GSUSB_MarshalFrame(USBD_HandleTypeDef *pdev, struct gs_host_frame *in, uint
 	out[ofs++] = in->channel;
 	out[ofs++] = in->flags;
 	out[ofs++] = in->reserved;
-	RAMN_memcpy(&out[ofs], in->data, in->can_dlc);
-	if(!hcan->enable_fdcan)
 	{
-		RAMN_memset(&out[ofs + in->can_dlc], 0x00, 8 - in->can_dlc);
-		ofs += 8;
-	}
-	else
-	{
-		RAMN_memset(&out[ofs + in->can_dlc], 0x00, 64 - in->can_dlc);
-		ofs += 64;
+		uint8_t actual = FDCAN_ConvertToActual(in->can_dlc);
+		RAMN_memcpy(&out[ofs], in->data, actual);
+		if(!hcan->enable_fdcan)
+		{
+			RAMN_memset(&out[ofs + actual], 0x00, 8 - actual);
+			ofs += 8;
+		}
+		else
+		{
+			RAMN_memset(&out[ofs + actual], 0x00, 64 - actual);
+			ofs += 64;
+		}
 	}
 
 	if (hcan->timestamps_enabled)
@@ -446,16 +450,19 @@ void GSUSB_UnmarshalFrame(USBD_HandleTypeDef *pdev, uint8_t *in, uint16_t inlen,
 	out->channel = in[ofs++];
 	out->flags = in[ofs++];
 	out->reserved = in[ofs++];
-	RAMN_memcpy(out->data, &in[ofs], out->can_dlc);
-	if(!hcan->enable_fdcan)
 	{
-		RAMN_memset(&out->data[out->can_dlc], 0x00, 8 - out->can_dlc);
-		ofs += 8;
-	}
-	else
-	{
-		RAMN_memset(&out->data[out->can_dlc], 0x00, 64 - out->can_dlc);
-		ofs += 64;
+		uint8_t actual = FDCAN_ConvertToActual(out->can_dlc);
+		RAMN_memcpy(out->data, &in[ofs], actual);
+		if(!hcan->enable_fdcan)
+		{
+			RAMN_memset(&out->data[actual], 0x00, 8 - actual);
+			ofs += 8;
+		}
+		else
+		{
+			RAMN_memset(&out->data[actual], 0x00, 64 - actual);
+			ofs += 64;
+		}
 	}
 
 	if (hcan->timestamps_enabled)
