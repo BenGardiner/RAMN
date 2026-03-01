@@ -7,7 +7,7 @@ on:
 
 jobs:
   build_all:
-    name: ${{ matrix.conf }} (v${{ matrix.cubeide_version }})
+    name: ${{ matrix.conf }} (tag ${{ matrix.cubeide_docker_tag }})
     permissions:
       contents: read
     strategy:
@@ -15,7 +15,7 @@ jobs:
       matrix:
         spice: [RAMNV1]
         conf: [Release, Debug]
-        cubeide_version: ["7.0", "15.0"]
+        cubeide_docker_tag: ["7.0", "15.0"]
 
     runs-on: ubuntu-latest
     steps:
@@ -24,7 +24,7 @@ jobs:
 
       - name: Build all ECUs (${{ matrix.conf }})
         env:
-          DOCKER_STM32CUBEIDE_VERSION: ${{ matrix.cubeide_version }}
+          DOCKER_STM32CUBEIDE_TAG: ${{ matrix.cubeide_docker_tag }}
         run: |
           chmod +x scripts/build/docker_BUILD_Clean_${{ matrix.conf }}.sh scripts/build/_build_ecu.sh
           bash scripts/build/docker_BUILD_Clean_${{ matrix.conf }}.sh
@@ -46,14 +46,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-metrics-${{ matrix.spice }}-${{ matrix.conf }}-${{ matrix.cubeide_version }}
+          name: build-metrics-${{ matrix.spice }}-${{ matrix.conf }}-${{ matrix.cubeide_docker_tag }}
           path: build-metrics/
 
       - name: upload RAMN dir as artifact
         if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.spice }}-${{ matrix.conf }}-${{ matrix.cubeide_version }}
+          name: ${{ matrix.spice }}-${{ matrix.conf }}-${{ matrix.cubeide_docker_tag }}
           path: .
 
   macro_coverage:
@@ -110,14 +110,14 @@ jobs:
             --enable "${{ matrix.enable }}" \
             --disable "${{ matrix.disable }}"
 
-      - name: Build ${{ matrix.ecu }}
+      - name: Macro-testing build ${{ matrix.ecu }}
         id: build
         continue-on-error: true
         run: |
           set -o pipefail
           chmod +x scripts/build/_build_ecu.sh
           source scripts/build/_version.sh
-          docker run --rm -e STM32_IMPORT_FLAG -v "$(pwd)":/workspace xanderhendriks/stm32cubeide:${DOCKER_STM32CUBEIDE_VERSION} bash -c '
+          docker run --rm -e STM32_IMPORT_FLAG -v "$(pwd)":/workspace xanderhendriks/stm32cubeide:${DOCKER_STM32CUBEIDE_TAG} bash -c '
             set -e
             ECU='"'"'${{ matrix.ecu }}'"'"'
             OUTPUT_FOLDER="/workspace/scripts/firmware"

@@ -23,7 +23,7 @@ Recommended: **docker_BUILD_Clean_Release.sh**.
 
 Override the Docker image version via environment variable:
 
-    DOCKER_STM32CUBEIDE_VERSION=7.0 bash scripts/build/docker_BUILD_Clean_Release.sh
+    DOCKER_STM32CUBEIDE_TAG=7.0 bash scripts/build/docker_BUILD_Clean_Release.sh
 
 ### Local builds
 

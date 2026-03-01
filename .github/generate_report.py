@@ -23,8 +23,8 @@ import sys
 
 
 def parse_hex_sizes(metrics_dir):
-    """Return {conf: {ecu: size_str}} from build-metrics artifacts."""
-    sizes = {"Release": {}, "Debug": {}}
+    """Return {(conf, tag): {ecu: size_str}} from build-metrics artifacts."""
+    sizes = {}
     if not os.path.isdir(metrics_dir):
         return sizes
     for entry in sorted(os.listdir(metrics_dir)):
@@ -33,20 +33,20 @@ def parse_hex_sizes(metrics_dir):
         if not os.path.isfile(txt):
             continue
         # directory name like build-metrics-RAMNV1-Release-15.0
-        # conf is the second-to-last segment (before the version number)
         parts = entry.split("-")
-        if len(parts) < 2:
+        if len(parts) < 3:
             continue
+        tag = parts[-1]
         conf = parts[-2]
-        if conf not in sizes:
-            continue
+        key = (conf, tag)
+        sizes.setdefault(key, {})
         with open(txt) as f:
             for line in f:
                 line = line.strip()
                 if "=" not in line:
                     continue
                 ecu, size = line.split("=", 1)
-                sizes[conf][ecu] = size
+                sizes[key][ecu] = size
     return sizes
 
 
@@ -62,14 +62,19 @@ def format_size(raw):
 
 
 def hex_size_table(sizes):
-    """Return Markdown table rows for hex sizes."""
-    lines = []
-    lines.append("| ECU | Release | Debug |")
-    lines.append("|-----|---------|-------|")
+    """Return Markdown table rows for hex sizes, grouped by docker tag."""
+    configs = sorted(sizes.keys())
+    if not configs:
+        return "| ECU | Release | Debug |\n|-----|---------|-------|\n"
+
+    headers = ["ECU"] + [f"{conf} (tag {tag})" for conf, tag in configs]
+    lines = ["| " + " | ".join(headers) + " |"]
+    lines.append("|" + "|".join(["-----"] * len(headers)) + "|")
     for ecu in ("ECUA", "ECUB", "ECUC", "ECUD"):
-        r = format_size(sizes["Release"].get(ecu, "N/A"))
-        d = format_size(sizes["Debug"].get(ecu, "N/A"))
-        lines.append(f"| {ecu} | {r} | {d} |")
+        row = [ecu]
+        for key in configs:
+            row.append(format_size(sizes[key].get(ecu, "N/A")))
+        lines.append("| " + " | ".join(row) + " |")
     return "\n".join(lines)
 
 

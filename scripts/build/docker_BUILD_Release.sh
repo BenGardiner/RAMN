@@ -22,4 +22,4 @@ fi
 STM32CUBEIDEWORKSPACE="$( cd "${SCRIPT_DIR}/../../" ; pwd )"
 source "${SCRIPT_DIR}/_version.sh"
 
-( cd "${STM32CUBEIDEWORKSPACE}"; docker run --rm -e STM32_IMPORT_FLAG -v .:/workspace xanderhendriks/stm32cubeide:${DOCKER_STM32CUBEIDE_VERSION} /workspace/scripts/build/docker_BUILD_Release.sh ) || exit 1
+( cd "${STM32CUBEIDEWORKSPACE}"; docker run --rm -e STM32_IMPORT_FLAG -v .:/workspace xanderhendriks/stm32cubeide:${DOCKER_STM32CUBEIDE_TAG} /workspace/scripts/build/docker_BUILD_Release.sh ) || exit 1
