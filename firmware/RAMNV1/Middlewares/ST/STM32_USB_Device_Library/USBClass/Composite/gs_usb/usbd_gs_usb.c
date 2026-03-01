@@ -280,6 +280,7 @@ static uint8_t gsusb_config_request(USBD_HandleTypeDef *pdev, USBD_SetupReqTyped
 
 #ifdef ENABLE_GSUSB_CANFD
 	case GS_USB_BREQ_BT_CONST_EXT:
+		// Use USBD_DescBuf instead of ep0_buf: extended bt_const (72 bytes) exceeds ep0_buf (64 bytes)
 		RAMN_memcpy(USBD_DescBuf, &gscan_btconst_ext, sizeof(gscan_btconst_ext));
 		USBD_CtlSendData(pdev, USBD_DescBuf, MIN(sizeof(gscan_btconst_ext), req->wLength));
 		break;

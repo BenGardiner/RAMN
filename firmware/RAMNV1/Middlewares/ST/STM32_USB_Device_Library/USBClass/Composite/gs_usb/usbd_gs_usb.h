@@ -167,7 +167,7 @@ enum gs_usb_breq {
 	GS_USB_BREQ_TIMESTAMP,
 	GS_USB_BREQ_IDENTIFY,
 	GS_USB_BREQ_DATA_BITTIMING,
-	GS_USB_BREQ_GET_USER_ID,
+	GS_USB_BREQ_GET_USER_ID,    // not implemented, placeholder for correct enum numbering
 	GS_USB_BREQ_BT_CONST_EXT,
 };
 
