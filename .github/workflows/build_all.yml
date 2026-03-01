@@ -245,7 +245,7 @@ jobs:
       - name: Calculate .c line coverage
         id: line_coverage
         run: |
-          python3 scripts/calculate_coverage.py > coverage_output.txt
+          python3 .github/calculate_coverage.py > coverage_output.txt
           cat coverage_output.txt
           while IFS='=' read -r key value; do
             echo "${key}=${value}" >> "$GITHUB_OUTPUT"
