@@ -65,7 +65,11 @@ const struct gs_device_bt_const gscan_btconst = {
 		| GS_CAN_FEATURE_IDENTIFY
 		| GS_CAN_FEATURE_USER_ID
 		| GS_CAN_FEATURE_PAD_PKTS_TO_MAX_PKT_SIZE
-		| GS_CAN_FEATURE_FD,
+#ifdef ENABLE_GSUSB_CANFD
+		| GS_CAN_FEATURE_FD
+		| GS_CAN_FEATURE_BT_CONST_EXT
+#endif
+		,
 		48000000, // can timing base clock
 		1,        // tseg1 min
 		16,       // tseg1 max
@@ -76,6 +80,36 @@ const struct gs_device_bt_const gscan_btconst = {
 		512,      // brp_max
 		1,        // brp increment;
 };
+
+#ifdef ENABLE_GSUSB_CANFD
+static const struct gs_device_bt_const_extended gscan_btconst_ext = {
+		GS_CAN_FEATURE_LISTEN_ONLY  // supported features
+		| GS_CAN_FEATURE_LOOP_BACK
+		| GS_CAN_FEATURE_HW_TIMESTAMP
+		| GS_CAN_FEATURE_IDENTIFY
+		| GS_CAN_FEATURE_USER_ID
+		| GS_CAN_FEATURE_PAD_PKTS_TO_MAX_PKT_SIZE
+		| GS_CAN_FEATURE_FD
+		| GS_CAN_FEATURE_BT_CONST_EXT,
+		48000000, // can timing base clock
+		1,        // tseg1 min
+		16,       // tseg1 max
+		2,        // tseg2 min
+		8,        // tseg2 max
+		4,        // sjw max
+		1,        // brp min
+		512,      // brp_max
+		1,        // brp increment
+		1,        // dtseg1 min
+		16,       // dtseg1 max
+		2,        // dtseg2 min
+		8,        // dtseg2 max
+		4,        // dsjw max
+		1,        // dbrp min
+		512,      // dbrp_max
+		1,        // dbrp increment
+};
+#endif
 
 
 /*  Microsoft Compatible ID Feature Descriptor  */
@@ -225,11 +259,15 @@ static uint8_t gsusb_config_request(USBD_HandleTypeDef *pdev, USBD_SetupReqTyped
 		USBD_CtlPrepareRx(pdev, hcan->ep0_buf, req->wLength);
 		break;
 	case GS_USB_BREQ_DATA_BITTIMING:
-
+#ifdef ENABLE_GSUSB_CANFD
 		hcan->enable_fdcan = 1;
 		hcan->last_setup_request = *req;
 		USBD_CtlPrepareRx(pdev, hcan->ep0_buf, req->wLength);
 		break;
+#else
+		ret = USBD_FAIL;
+		break;
+#endif
 	case GS_USB_BREQ_DEVICE_CONFIG:
 		RAMN_memcpy(hcan->ep0_buf, &gscan_dconf, sizeof(gscan_dconf));
 		USBD_CtlSendData(pdev, hcan->ep0_buf, req->wLength);
@@ -239,6 +277,13 @@ static uint8_t gsusb_config_request(USBD_HandleTypeDef *pdev, USBD_SetupReqTyped
 		RAMN_memcpy(hcan->ep0_buf, &gscan_btconst, sizeof(gscan_btconst));
 		USBD_CtlSendData(pdev, hcan->ep0_buf, req->wLength);
 		break;
+
+#ifdef ENABLE_GSUSB_CANFD
+	case GS_USB_BREQ_BT_CONST_EXT:
+		RAMN_memcpy(USBD_DescBuf, &gscan_btconst_ext, sizeof(gscan_btconst_ext));
+		USBD_CtlSendData(pdev, USBD_DescBuf, MIN(sizeof(gscan_btconst_ext), req->wLength));
+		break;
+#endif
 
 	case GS_USB_BREQ_TIMESTAMP:
 		RAMN_memcpy(hcan->ep0_buf, &hcan->sof_timestamp_us, sizeof(hcan->sof_timestamp_us));

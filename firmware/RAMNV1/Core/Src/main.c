@@ -2296,6 +2296,7 @@ void RAMN_RxTask2Func(void *argument)
 			if (recvFrame->can_id & CAN_EFF_FLAG) CANTxHeader.IdType = FDCAN_EXTENDED_ID;
 			else CANTxHeader.IdType = FDCAN_STANDARD_ID;
 
+#ifdef ENABLE_GSUSB_CANFD
 			if (recvFrame->flags & GS_CAN_FLAG_FD)
 			{
 				CANTxHeader.FDFormat = FDCAN_FD_CAN;
@@ -2303,6 +2304,7 @@ void RAMN_RxTask2Func(void *argument)
 				CANTxHeader.ErrorStateIndicator = (recvFrame->flags & GS_CAN_FLAG_ESI) ? FDCAN_ESI_PASSIVE : FDCAN_ESI_ACTIVE;
 			}
 			else
+#endif
 			{
 				CANTxHeader.FDFormat = FDCAN_CLASSIC_CAN;
 				CANTxHeader.BitRateSwitch = FDCAN_BRS_OFF;

@@ -60,6 +60,7 @@ THE SOFTWARE.
 
 #define GS_CAN_FEATURE_PAD_PKTS_TO_MAX_PKT_SIZE (1<<7)
 #define GS_CAN_FEATURE_FD                       (1<<8)
+#define GS_CAN_FEATURE_BT_CONST_EXT             (1<<10)
 
 #define GS_CAN_FLAG_OVERFLOW 1
 #define GS_CAN_FLAG_FD       (1<<1)
@@ -166,6 +167,8 @@ enum gs_usb_breq {
 	GS_USB_BREQ_TIMESTAMP,
 	GS_USB_BREQ_IDENTIFY,
 	GS_USB_BREQ_DATA_BITTIMING,
+	GS_USB_BREQ_GET_USER_ID,
+	GS_USB_BREQ_BT_CONST_EXT,
 };
 
 enum gs_can_mode {
@@ -232,6 +235,27 @@ struct __attribute__ ((__packed__)) gs_device_bt_const {
 	uint32_t brp_min;
 	uint32_t brp_max;
 	uint32_t brp_inc;
+};
+
+struct __attribute__ ((__packed__)) gs_device_bt_const_extended {
+	uint32_t feature;
+	uint32_t fclk_can;
+	uint32_t tseg1_min;
+	uint32_t tseg1_max;
+	uint32_t tseg2_min;
+	uint32_t tseg2_max;
+	uint32_t sjw_max;
+	uint32_t brp_min;
+	uint32_t brp_max;
+	uint32_t brp_inc;
+	uint32_t dtseg1_min;
+	uint32_t dtseg1_max;
+	uint32_t dtseg2_min;
+	uint32_t dtseg2_max;
+	uint32_t dsjw_max;
+	uint32_t dbrp_min;
+	uint32_t dbrp_max;
+	uint32_t dbrp_inc;
 };
 
 

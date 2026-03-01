@@ -40,12 +40,14 @@ RAMN_Result_t RAMN_GSUSB_ProcessRX(FDCAN_RxHeaderTypeDef *canRxHeader, uint8_t *
 		frameData->can_dlc = canRxHeader->DataLength;
 		frameData->timestamp_us = (xTaskGetTickCount() * (1000000 /*us per sec*/ / configTICK_RATE_HZ) );
 
+#ifdef ENABLE_GSUSB_CANFD
 		if (canRxHeader->FDFormat == FDCAN_FD_CAN)
 		{
 			frameData->flags |= GS_CAN_FLAG_FD;
 			if (canRxHeader->BitRateSwitch == FDCAN_BRS_ON)   frameData->flags |= GS_CAN_FLAG_BRS;
 			if (canRxHeader->ErrorStateIndicator == FDCAN_ESI_PASSIVE) frameData->flags |= GS_CAN_FLAG_ESI;
 		}
+#endif
 
 		if (!(frameData->can_id & CAN_RTR_FLAG))
 		{
@@ -84,11 +86,13 @@ RAMN_Result_t RAMN_GSUSB_ProcessTX(FDCAN_TxHeaderTypeDef *canTxHeader, uint8_t *
 		frameData->can_dlc = canTxHeader->DataLength;
 		frameData->timestamp_us = 0;  // timestamps are ignored on send
 
+#ifdef ENABLE_GSUSB_CANFD
 		if (canTxHeader->FDFormat == FDCAN_FD_CAN)
 		{
 			frameData->flags |= GS_CAN_FLAG_FD;
 			if (canTxHeader->BitRateSwitch == FDCAN_BRS_ON) frameData->flags |= GS_CAN_FLAG_BRS;
 		}
+#endif
 
 		{
 			uint8_t actual = FDCAN_ConvertToActual(frameData->can_dlc);
