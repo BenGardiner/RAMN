@@ -24,4 +24,8 @@ if [ "$SKIP_IMPORT" = false ]; then
 	stm32cubeide --launcher.suppressErrors -nosplash -application org.eclipse.cdt.managedbuilder.core.headlessbuild -data /tmp/stm-workspace -import ${PROJECT_WORKSPACE}
 fi
 
+# Normalize file timestamps to avoid "Clock skew detected" warnings from make
+# when the Docker container's clock is behind the host that created the files.
+find "${PROJECT_WORKSPACE}" -exec touch -c {} + 2>/dev/null || true
+
 headless-build.sh -data /tmp/stm-workspace ${BUILD_MODE} ${PROJECT_NAME}/${PROJECT_CONF} -D ${ECU}
