@@ -21,39 +21,10 @@ jobs:
       - name: checkout
         uses: actions/checkout@v4
 
-      - name: Build ECUB
-        uses: ./.github/actions/build-stm32cubeide
-        with:
-          project-path: firmware/${{ matrix.spice }} -D TARGET_ECUB
-          project-target: ${{ matrix.spice}}/${{ matrix.conf}} -D TARGET_ECUB
-      - name: Copy ECUB hex
-        run: cp firmware/${{ matrix.spice }}/${{ matrix.conf }}/${{ matrix.spice }}.hex scripts/firmware/ECUB.hex
-
-      - name: Build ECUC
-        uses: ./.github/actions/build-stm32cubeide
-        with:
-          project-path: firmware/${{ matrix.spice }} -D TARGET_ECUC
-          project-target: ${{ matrix.spice}}/${{ matrix.conf}} -D TARGET_ECUC
-      - name: Copy ECUC hex
-        run: cp firmware/${{ matrix.spice }}/${{ matrix.conf }}/${{ matrix.spice }}.hex scripts/firmware/ECUC.hex
-
-      - name: Build ECUD
-        uses: ./.github/actions/build-stm32cubeide
-        with:
-          project-path: firmware/${{ matrix.spice }} -D TARGET_ECUD
-          project-target: ${{ matrix.spice}}/${{ matrix.conf}} -D TARGET_ECUD
-      - name: Copy ECUD hex
-        run: cp firmware/${{ matrix.spice }}/${{ matrix.conf }}/${{ matrix.spice }}.hex scripts/firmware/ECUD.hex
-
-      - name: Build ECUA
-        if: ${{ matrix.spice!='RAMNV1_CTF' }}
-        uses: ./.github/actions/build-stm32cubeide
-        with:
-          project-path: firmware/${{ matrix.spice }} -D TARGET_ECUA
-          project-target: ${{ matrix.spice}}/${{ matrix.conf}} -D TARGET_ECUA
-      - name: Copy ECUA hex
-        if: ${{ matrix.spice!='RAMNV1_CTF' }}
-        run: cp firmware/${{ matrix.spice }}/${{ matrix.conf }}/${{ matrix.spice }}.hex scripts/firmware/ECUA.hex
+      - name: Build all ECUs (${{ matrix.conf }})
+        run: |
+          chmod +x scripts/build/docker_Clean_BUILD_Release.sh scripts/build/_build_ecu.sh
+          bash scripts/build/docker_Clean_BUILD_Release.sh ${{ matrix.conf }}
 
       - name: Collect hex file sizes
         if: always()
@@ -185,8 +156,8 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          chmod +x scripts/build/docker_Clean_BUILD_Release_ECU.sh
-          bash scripts/build/docker_Clean_BUILD_Release_ECU.sh ${{ matrix.ecu }} 2>&1 | tee build-output.log
+          chmod +x scripts/build/docker_Clean_BUILD_Release.sh scripts/build/_build_ecu.sh
+          bash scripts/build/docker_Clean_BUILD_Release.sh ${{ matrix.ecu }} 2>&1 | tee build-output.log
 
       - name: Collect build results
         if: always()
