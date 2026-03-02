@@ -189,6 +189,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      issues: write
     needs: [build_all, macro_coverage]
     if: always()
     runs-on: ubuntu-latest
