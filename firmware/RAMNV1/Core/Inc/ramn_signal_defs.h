@@ -26,6 +26,20 @@
 #define PACK_SIGNAL(val, mask, offset)       (((val) & (mask)) << (offset))
 #define UNPACK_SIGNAL(payload, mask, offset) (((payload) >> (offset)) & (mask))
 
+#ifdef USE_BIG_ENDIAN_CAN
+#undef PACK_SIGNAL
+#define PACK_SIGNAL(val, mask, offset) \
+    ((mask) == 0xFFFF ? \
+    ((((((val) & (mask)) << (offset)) & 0xFF) << 8) | (((((val) & (mask)) << (offset)) >> 8) & 0xFF)) : \
+    (((val) & (mask)) << (offset)))
+
+#undef UNPACK_SIGNAL
+#define UNPACK_SIGNAL(payload, mask, offset) \
+    ((mask) == 0xFFFF ? \
+    ((((((payload) >> (offset)) & (mask)) & 0xFF) << 8) | (((((payload) >> (offset)) & (mask)) >> 8) & 0xFF)) : \
+    (((payload) >> (offset)) & (mask)))
+#endif
+
 // Signal Definitions
 
 // Control Brake

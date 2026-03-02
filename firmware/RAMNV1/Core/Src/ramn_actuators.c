@@ -43,26 +43,45 @@ void RAMN_ACTUATORS_SetLampState(uint8_t mask, uint8_t val)
 
 void RAMN_ACTUATORS_ApplyControls(uint32_t tick)
 {
-
 #if defined(EXPANSION_CHASSIS) //CHASSIS
+	uint16_t payload;
 
-	msg_control_steering.data->ramnData.payload = applyEndian16(PACK_SIGNAL((uint16_t)RAMN_DBC_Handle.control_steer, CONTROL_STEERING_MASK, CONTROL_STEERING_OFFSET));
-	msg_control_sidebrake.data->ramnData.payload = PACK_SIGNAL(RAMN_DBC_Handle.control_sidebrake, CONTROL_SIDEBRAKE_MASK, CONTROL_SIDEBRAKE_OFFSET);
-	msg_command_lights.data->ramnData.payload = PACK_SIGNAL(RAMN_DBC_Handle.command_lights, COMMAND_LIGHTS_MASK, COMMAND_LIGHTS_OFFSET);
+	payload = PACK_SIGNAL((uint16_t)RAMN_DBC_Handle.control_steer, CONTROL_STEERING_MASK, CONTROL_STEERING_OFFSET);
+	RAMN_memcpy(&(msg_control_steering.data->rawData[CAN_SIM_CONTROL_STEERING_PAYLOAD_OFFSET / 8]), (uint8_t*)&payload, sizeof(payload));
+
+	payload = PACK_SIGNAL(RAMN_DBC_Handle.control_sidebrake, CONTROL_SIDEBRAKE_MASK, CONTROL_SIDEBRAKE_OFFSET);
+	RAMN_memcpy(&(msg_control_sidebrake.data->rawData[CAN_SIM_CONTROL_SIDEBRAKE_PAYLOAD_OFFSET / 8]), (uint8_t*)&payload, sizeof(payload));
+
+	payload = PACK_SIGNAL(RAMN_DBC_Handle.command_lights, COMMAND_LIGHTS_MASK, COMMAND_LIGHTS_OFFSET);
+	RAMN_memcpy(&(msg_command_lights.data->rawData[CAN_SIM_COMMAND_LIGHTS_PAYLOAD_OFFSET / 8]), (uint8_t*)&payload, sizeof(payload));
 
 #elif defined(EXPANSION_POWERTRAIN) //POWERTRAIN
+	uint16_t payload;
 
-	msg_control_brake.data->ramnData.payload = applyEndian16(PACK_SIGNAL((uint16_t)RAMN_DBC_Handle.control_brake, CONTROL_BRAKE_MASK, CONTROL_BRAKE_OFFSET));
-	msg_control_accel.data->ramnData.payload = applyEndian16(PACK_SIGNAL((uint16_t)RAMN_DBC_Handle.control_accel, CONTROL_ACCEL_MASK, CONTROL_ACCEL_OFFSET));
-	msg_control_shift.data->ramnData.payload = PACK_SIGNAL(RAMN_DBC_Handle.control_shift, CONTROL_SHIFT_MASK, CONTROL_SHIFT_OFFSET) | 
-	                                           PACK_SIGNAL(RAMN_DBC_Handle.joystick, JOYSTICK_MASK, JOYSTICK_OFFSET);
-	msg_command_horn.data->ramnData.payload = PACK_SIGNAL(RAMN_DBC_Handle.command_horn, COMMAND_HORN_MASK, COMMAND_HORN_OFFSET);
-	msg_command_turnindicator.data->ramnData.payload = PACK_SIGNAL(RAMN_DBC_Handle.command_turnindicator, COMMAND_TURNINDICATOR_MASK, COMMAND_TURNINDICATOR_OFFSET);
+	payload = PACK_SIGNAL((uint16_t)RAMN_DBC_Handle.control_brake, CONTROL_BRAKE_MASK, CONTROL_BRAKE_OFFSET);
+	RAMN_memcpy(&(msg_control_brake.data->rawData[CAN_SIM_CONTROL_BRAKE_PAYLOAD_OFFSET / 8]), (uint8_t*)&payload, sizeof(payload));
+
+	payload = PACK_SIGNAL((uint16_t)RAMN_DBC_Handle.control_accel, CONTROL_ACCEL_MASK, CONTROL_ACCEL_OFFSET);
+	RAMN_memcpy(&(msg_control_accel.data->rawData[CAN_SIM_CONTROL_ACCEL_PAYLOAD_OFFSET / 8]), (uint8_t*)&payload, sizeof(payload));
+
+	payload = PACK_SIGNAL(RAMN_DBC_Handle.control_shift, CONTROL_SHIFT_MASK, CONTROL_SHIFT_OFFSET) |
+	          PACK_SIGNAL(RAMN_DBC_Handle.joystick, JOYSTICK_MASK, JOYSTICK_OFFSET);
+	RAMN_memcpy(&(msg_control_shift.data->rawData[CAN_SIM_CONTROL_SHIFT_PAYLOAD_OFFSET / 8]), (uint8_t*)&payload, sizeof(payload));
+
+	payload = PACK_SIGNAL(RAMN_DBC_Handle.command_horn, COMMAND_HORN_MASK, COMMAND_HORN_OFFSET);
+	RAMN_memcpy(&(msg_command_horn.data->rawData[CAN_SIM_COMMAND_HORN_PAYLOAD_OFFSET / 8]), (uint8_t*)&payload, sizeof(payload));
+
+	payload = PACK_SIGNAL(RAMN_DBC_Handle.command_turnindicator, COMMAND_TURNINDICATOR_MASK, COMMAND_TURNINDICATOR_OFFSET);
+	RAMN_memcpy(&(msg_command_turnindicator.data->rawData[CAN_SIM_COMMAND_TURNINDICATOR_PAYLOAD_OFFSET / 8]), (uint8_t*)&payload, sizeof(payload));
 
 #elif defined(EXPANSION_BODY) //BODY
+	uint16_t payload;
 
-	msg_control_enginekey.data->ramnData.payload = PACK_SIGNAL(RAMN_DBC_Handle.control_enginekey, CONTROL_ENGINEKEY_MASK, CONTROL_ENGINEKEY_OFFSET);
-	msg_control_lights.data->ramnData.payload = PACK_SIGNAL(RAMN_DBC_Handle.control_lights, CONTROL_LIGHTS_MASK, CONTROL_LIGHTS_OFFSET);
+	payload = PACK_SIGNAL(RAMN_DBC_Handle.control_enginekey, CONTROL_ENGINEKEY_MASK, CONTROL_ENGINEKEY_OFFSET);
+	RAMN_memcpy(&(msg_control_enginekey.data->rawData[CAN_SIM_CONTROL_ENGINEKEY_PAYLOAD_OFFSET / 8]), (uint8_t*)&payload, sizeof(payload));
+
+	payload = PACK_SIGNAL(RAMN_DBC_Handle.control_lights, CONTROL_LIGHTS_MASK, CONTROL_LIGHTS_OFFSET);
+	RAMN_memcpy(&(msg_control_lights.data->rawData[CAN_SIM_CONTROL_LIGHTS_PAYLOAD_OFFSET / 8]), (uint8_t*)&payload, sizeof(payload));
 
 #if (LED_TEST_DURATION_MS > 0)
 
