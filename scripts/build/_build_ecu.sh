@@ -27,15 +27,6 @@ PROJECT_WORKSPACE="${WORKSPACE}/firmware/${PROJECT_NAME}"
 
 set -e
 
-# The .cproject uses -Wl,--no-warn-rwx-segments (binutils >= 2.39) to
-# suppress the false-positive "LOAD segment with RWX permissions" warning.
-# Strip it on older toolchains that would reject the unknown flag.
-_ld_bin=$(find /opt -name "arm-none-eabi-ld" -type f 2>/dev/null | head -1)
-if [ -n "${_ld_bin}" ] && ! "${_ld_bin}" --help 2>&1 | grep -q -- '--no-warn-rwx-segments'; then
-	sed -i 's/-Wl,--no-warn-rwx-segments//' "${PROJECT_WORKSPACE}/.cproject" 2>/dev/null || true
-fi
-unset _ld_bin
-
 if [ "$SKIP_IMPORT" = false ]; then
 	# STM32CubeIDE >= 1.18.0 (docker tag >= 15.0) replaced -import with -importAll
 	IMPORT_FLAG="${STM32_IMPORT_FLAG:--import}"
