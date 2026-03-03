@@ -23,7 +23,7 @@ import sys
 
 
 def parse_hex_sizes(metrics_dir):
-    """Return {(conf, tag): {ecu: size_str}} from build-metrics artifacts."""
+    """Return {(conf, tag, variant): {ecu: size_str}} from build-metrics artifacts."""
     sizes = {}
     if not os.path.isdir(metrics_dir):
         return sizes
@@ -32,15 +32,16 @@ def parse_hex_sizes(metrics_dir):
         txt = os.path.join(d, "hex-sizes.txt")
         if not os.path.isfile(txt):
             continue
-        # directory name like build-metrics-RAMNV1-Release-15.0
+        # directory name like build-metrics-RAMNV1-<variant>-<conf>-<tag>
         if not entry.startswith("build-metrics-"):
             continue
         parts = entry.split("-")
-        if len(parts) < 5:
+        if len(parts) < 6:
             continue
         tag = parts[-1]
         conf = parts[-2]
-        key = (conf, tag)
+        variant = parts[-3]
+        key = (conf, tag, variant)
         sizes.setdefault(key, {})
         with open(txt) as f:
             for line in f:
@@ -69,7 +70,11 @@ def hex_size_table(sizes):
     if not configs:
         return "| ECU | Release | Debug |\n|-----|---------|-------|\n"
 
-    headers = ["ECU"] + [f"{conf} (tag {tag})" for conf, tag in configs]
+    def col_header(conf, tag, variant):
+        label = conf if variant == "default" else f"{conf} ({variant})"
+        return f"{label} (tag {tag})"
+
+    headers = ["ECU"] + [col_header(conf, tag, variant) for conf, tag, variant in configs]
     lines = ["| " + " | ".join(headers) + " |"]
     lines.append("|" + "|".join(["-----"] * len(headers)) + "|")
     for ecu in ("ECUA", "ECUB", "ECUC", "ECUD"):
