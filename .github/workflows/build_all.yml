@@ -34,8 +34,7 @@ jobs:
           python3 .github/modify_config.py \
             --ecu TARGET_ECUA \
             --variant "${{ matrix.variant }}" \
-            --enable "ENABLE_GSUSB" \
-            --disable "ENABLE_CDC"
+            --enable "ENABLE_GSUSB"
 
       - name: Build all ECUs (${{ matrix.conf }})
         env:
