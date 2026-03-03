@@ -21,12 +21,7 @@ jobs:
         spice: [RAMNV1]
         conf: [Release, Debug]
         cubeide_docker_tag: ["15.0"]
-        variant: [default]
-        include:
-          - spice: RAMNV1
-            conf: Release
-            cubeide_docker_tag: "15.0"
-            variant: gsusb
+        variant: [default, gsusb]
 
     runs-on: ubuntu-latest
     steps:
