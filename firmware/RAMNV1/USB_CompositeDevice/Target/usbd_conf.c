@@ -627,7 +627,18 @@ USBD_StatusTypeDef USBD_LL_Transmit(USBD_HandleTypeDef *pdev, uint8_t ep_addr, u
 	HAL_StatusTypeDef hal_status = HAL_OK;
 	USBD_StatusTypeDef usb_status = USBD_OK;
 
+	/* USER CODE BEGIN USBD_LL_Transmit_Concurrency_Fix */
+	/* Disable USB IRQ to prevent ISR preemption during EP transmit,
+	 * avoiding USBD_BUSY deadlocks on aggressive xHCI host controllers.
+	 * See: https://community.st.com/t5/stm32-mcus-embedded-software/usb-cdc-device-receive-fails-on-transmit/td-p/472929 */
+	HAL_NVIC_DisableIRQ(USB_FS_IRQn);
+	/* USER CODE END USBD_LL_Transmit_Concurrency_Fix */
+
 	hal_status = HAL_PCD_EP_Transmit(pdev->pData, ep_addr, pbuf, size);
+
+	/* USER CODE BEGIN USBD_LL_Transmit_Concurrency_Fix_Restore */
+	HAL_NVIC_EnableIRQ(USB_FS_IRQn);
+	/* USER CODE END USBD_LL_Transmit_Concurrency_Fix_Restore */
 
 	usb_status =  USBD_Get_USB_Status(hal_status);
 
@@ -647,7 +658,18 @@ USBD_StatusTypeDef USBD_LL_PrepareReceive(USBD_HandleTypeDef *pdev, uint8_t ep_a
 	HAL_StatusTypeDef hal_status = HAL_OK;
 	USBD_StatusTypeDef usb_status = USBD_OK;
 
+	/* USER CODE BEGIN USBD_LL_PrepareReceive_Concurrency_Fix */
+	/* Disable USB IRQ to prevent ISR preemption during EP receive,
+	 * avoiding USBD_BUSY deadlocks on aggressive xHCI host controllers.
+	 * See: https://community.st.com/t5/stm32-mcus-embedded-software/usb-cdc-device-receive-fails-on-transmit/td-p/472929 */
+	HAL_NVIC_DisableIRQ(USB_FS_IRQn);
+	/* USER CODE END USBD_LL_PrepareReceive_Concurrency_Fix */
+
 	hal_status = HAL_PCD_EP_Receive(pdev->pData, ep_addr, pbuf, size);
+
+	/* USER CODE BEGIN USBD_LL_PrepareReceive_Concurrency_Fix_Restore */
+	HAL_NVIC_EnableIRQ(USB_FS_IRQn);
+	/* USER CODE END USBD_LL_PrepareReceive_Concurrency_Fix_Restore */
 
 	usb_status =  USBD_Get_USB_Status(hal_status);
 

@@ -1470,19 +1470,7 @@ HAL_StatusTypeDef HAL_PCD_EP_Receive(PCD_HandleTypeDef *hpcd, uint8_t ep_addr, u
   ep->is_in = 0U;
   ep->num = ep_addr & EP_ADDR_MSK;
 
-  HAL_NVIC_DisableIRQ(USB_FS_IRQn);
-
-  if (hpcd->Lock == HAL_LOCKED)
-  {
-    HAL_NVIC_EnableIRQ(USB_FS_IRQn);
-    return HAL_BUSY;
-  }
-  hpcd->Lock = HAL_LOCKED;
-
   (void)USB_EPStartXfer(hpcd->Instance, ep);
-
-  hpcd->Lock = HAL_UNLOCKED;
-  HAL_NVIC_EnableIRQ(USB_FS_IRQn);
 
   return HAL_OK;
 }
@@ -1520,19 +1508,7 @@ HAL_StatusTypeDef HAL_PCD_EP_Transmit(PCD_HandleTypeDef *hpcd, uint8_t ep_addr, 
   ep->is_in = 1U;
   ep->num = ep_addr & EP_ADDR_MSK;
 
-  HAL_NVIC_DisableIRQ(USB_FS_IRQn);
-
-  if (hpcd->Lock == HAL_LOCKED)
-  {
-    HAL_NVIC_EnableIRQ(USB_FS_IRQn);
-    return HAL_BUSY;
-  }
-  hpcd->Lock = HAL_LOCKED;
-
   (void)USB_EPStartXfer(hpcd->Instance, ep);
-
-  hpcd->Lock = HAL_UNLOCKED;
-  HAL_NVIC_EnableIRQ(USB_FS_IRQn);
 
   return HAL_OK;
 }
