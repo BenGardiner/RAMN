@@ -433,7 +433,7 @@ uint8_t RAMN_Decode_Control_EngineKey(const uint8_t* payload, uint32_t dlc) {
 void RAMN_Encode_Control_EngineKey(uint8_t value, uint8_t* payload) {
     /* SPN 3046 (Ignition Switch). Byte 1 (bits 0-1). PGN 64960. */
     memset(payload, 0xFF, 8);
-    payload[0] = (payload[0] & 0xFC) | (uint8_t)((value != 0U) ? 1U : 0U);
+    payload[0] = (payload[0] & 0xFC) | (uint8_t)(value & 0x03);
 }
 
 uint8_t RAMN_Decode_Control_EngineKey(const uint8_t* payload, uint32_t dlc) {
@@ -482,8 +482,14 @@ uint8_t RAMN_Decode_Control_Lights(const uint8_t* payload, uint32_t dlc) {
 #else
 void RAMN_Encode_Control_Lights(uint8_t value, uint8_t* payload) {
     /* SPN 2872 (Main Light Switch). Byte 1 (bits 4-7). PGN 64972 (OEL). */
+    /* LED_TAILLAMP = 0x08, LED_LOWBEAM = 0x10, LED_HIGHBEAM = 0x20 */
+    uint8_t spn_2872 = 0;
+    if (value & 0x20) spn_2872 = 3; // Highbeam
+    else if (value & 0x10) spn_2872 = 2; // Lowbeam
+    else if (value & 0x08) spn_2872 = 1; // Taillamp
+
     memset(payload, 0xFF, 8);
-    payload[0] = (payload[0] & 0x0F) | (uint8_t)((value & 0x0F) << 4);
+    payload[0] = (payload[0] & 0x0F) | (uint8_t)(spn_2872 << 4);
 
     /* SPN 2876 (Turn Signal Indicator). Byte 2 (bits 8-11). PGN 64972 (OEL). */
     /* LED_LEFTTURN = 0x40, LED_RIGHTTURN = 0x80 */
@@ -497,12 +503,17 @@ void RAMN_Encode_Control_Lights(uint8_t value, uint8_t* payload) {
 
 uint8_t RAMN_Decode_Control_Lights(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 2U) return 0;
-    uint8_t lights = (uint8_t)((payload[0] >> 4) & 0x0F);
+    uint8_t spn_2872 = (payload[0] >> 4) & 0x0F;
+    uint8_t lights = 0;
     
-    uint8_t spn_val = payload[1] & 0x0F;
-    if (spn_val == 1) lights |= 0x40; // Left
-    else if (spn_val == 2) lights |= 0x80; // Right
-    else if (spn_val == 3) lights |= 0xC0; // Hazard
+    if (spn_2872 >= 1) lights |= 0x08; // Taillamp
+    if (spn_2872 >= 2) lights |= 0x10; // Lowbeam
+    if (spn_2872 >= 3) lights |= 0x20; // Highbeam
+    
+    uint8_t turn_spn = payload[1] & 0x0F;
+    if (turn_spn == 1) lights |= 0x40; // Left
+    else if (turn_spn == 2) lights |= 0x80; // Right
+    else if (turn_spn == 3) lights |= 0xC0; // Hazard
     
     return lights;
 }

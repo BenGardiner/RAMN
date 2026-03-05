@@ -148,18 +148,17 @@ def test_default_signal_roundtrip(signal_name, range_limit):
     # Command_TurnIndicator now uses specific RAMN mappings (0x0100, 0x0001) instead of 0-15, tested separately
     ("Command_Sidebrake", 4, 0, [0]),
     ("Control_Sidebrake", 4, 0, [0]),
-    ("Control_EngineKey", 2, 0, [0]),
+    ("Control_EngineKey", 3, 0, [0]),
     ("Command_Lights", 256, 0, [0]),
-    ("Control_Lights", 16, 0, [0, 1]),
 ])
 def test_j1939_signal_roundtrip(signal_name, range_limit, tolerance, used_bytes):
-        encode_func = getattr(ramn_can_db_j1939, f"RAMN_Encode_{signal_name}")
-        decode_func = getattr(ramn_can_db_j1939, f"RAMN_Decode_{signal_name}")
-        step = 1 if range_limit <= 4096 else range_limit // 100
-        for val in range(0, range_limit, step):
-            # Initialize payload with zeros to check if C code memsets to 0xFF
-            payload = (ctypes.c_uint8 * 8)(0,0,0,0,0,0,0,0)
-            encode_func(val, payload)
+    encode_func = getattr(ramn_can_db_j1939, f"RAMN_Encode_{signal_name}")
+    decode_func = getattr(ramn_can_db_j1939, f"RAMN_Decode_{signal_name}")
+    step = 1 if range_limit <= 4096 else range_limit // 100
+    for val in range(0, range_limit, step):
+        # Initialize payload with zeros to check if C code memsets to 0xFF
+        payload = (ctypes.c_uint8 * 8)(0,0,0,0,0,0,0,0)
+        encode_func(val, payload)
         
         # Isolation: Unused bytes should be 0xFF (set by C code)
         for i in range(8):
@@ -218,8 +217,12 @@ def test_j1939_control_lights_turn_indicator():
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Lights")
     decode_func = getattr(ramn_can_db_j1939, "RAMN_Decode_Control_Lights")
     
-    # Base lights (0-15) combined with turn indicators (0x40 Left, 0x80 Right)
-    test_cases = [0, 15, 0x40, 0x80, 0xC0, 15 | 0x40, 15 | 0x80, 15 | 0xC0]
+    # Base lights (0x00, 0x08, 0x18, 0x38) combined with turn indicators (0x40 Left, 0x80 Right, 0xC0 Hazard)
+    base_lights = [0x00, 0x08, 0x18, 0x38]
+    turns = [0x00, 0x40, 0x80, 0xC0]
+    
+    test_cases = [l | t for l in base_lights for t in turns]
+    
     for val in test_cases:
         payload = (ctypes.c_uint8 * 8)(0,0,0,0,0,0,0,0)
         encode_func(val, payload)
@@ -228,5 +231,6 @@ def test_j1939_control_lights_turn_indicator():
             if i not in [0, 1]:
                 assert payload[i] == 0xFF
                 
-        assert decode_func(payload, 8) == val
+        decoded_val = decode_func(payload, 8)
+        assert decoded_val == val, f"Control_Lights roundtrip failed for {hex(val)}, got {hex(decoded_val)}"
 
