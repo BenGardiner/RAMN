@@ -78,6 +78,43 @@ The SHIFT joystick has 5 positions (excluding the released state): Left-pressed,
 
 **Hold each of these positions and verify that the bottom of the screen respectively shows "LT", "RT", "UP", "DW", and "MD".**
 (When using left/right, you will move between screens. If you end up on a screen that has no bottom text, try moving to another screen).
+
+Step 10: Verify J1939 CAN Traffic (J1939 Mode Only)
+###################################################
+
+If your board has been flashed with the ``ENABLE_J1939_MODE`` compile-time switch active, the standard RAMN CAN matrix is replaced by an SAE J1939-compliant Multi-Controller Application architecture. To test this mode, connect a CAN adapter (e.g., PCAN, Kvaser, or a generic socketCAN device) to the CAN-H/CAN-L pins. Ensure your sniffing software is configured to decode 29-bit Extended CAN IDs.
+
+Operate the physical controls and verify the corresponding J1939 PGNs and payloads:
+
+* **Engine Key:**
+  Move the engine key. Observe the Control Status on **PGN 0xFDC0** (64960), Source Address 0x4D (77). **CAN ID to inspect: 0x18FDC04D**. Byte 1 (bits 0-1) should change to reflect the switch state (0=OFF, 1=ACC, 2=IGN). Unused bits should be set to their Not Available state.
+
+* **Steering (Chassis Potentiometer):**
+  Turn the steering potentiometer left and right. Observe the Control Status on **ESC1 (PGN 0xF00B** / 61451), Source Address 0x13 (19). **CAN ID to inspect: 0x18F00B13**. Bytes 1-2 (SPN 2928) will sweep through the mapped angle range. *(Note: The Proprietary A Command message is an external request and will not change via the physical knob).*
+
+* **Brake Pedal:**
+  Move the brake potentiometer up and down. Observe the Control Status on **EBC1 (PGN 0xF001** / 61441), Source Address 0x21 (33). **CAN ID to inspect: 0x18F00121**. Byte 2 (SPN 521) should vary between 0% and 100% position. *(Note: The XBR Command is an external autonomous request).*
+
+* **Accelerator Pedal:**
+  Move the accelerator potentiometer up and down. Observe the Control Status on **EEC2 (PGN 0xF003** / 61443), Source Address 0x21 (33). **CAN ID to inspect: 0x18F00321**. Byte 2 (SPN 91) should vary between 0% and 100% position. *(Note: The TSC1 Command is an external autonomous request).*
+
+* **Shift Joystick:**
+  Move the SHIFT joystick (Up/Down/Left/Right/Press). Observe the Control Status on **ETC2 (PGN 0xF005** / 61445), Source Address 0x03 (3). **CAN ID to inspect: 0x18F00503**. Verify that Byte 4 (SPN 523, Current Gear) and Byte 5 (SPN 162, Requested Range) update according to the joystick position. *(Note: The TC1 Command is an external autonomous request).*
+
+* **Handbrake (Sidebrake):**
+  Toggle the Handbrake up and down. Observe the Control Status on **EBS1 (PGN 0x0200** / 512), Source Address 0x0B (11). **CAN ID to inspect: 0x1802FF0B** (Broadcast DA=255). Byte 1 (bits 0-1, SPN 619) should reflect the active and inactive states. *(Note: The CCVS1 Command is an external autonomous request).*
+
+* **Headlights Switch:**
+  Toggle the headlights switch through its four positions. 
+  - **Control Status:** Observe **OEL (PGN 0xFDCC** / 64972), Source Address 0x21 (33). **CAN ID to inspect: 0x18FDCC21**. Byte 1 (bits 4-7, SPN 2872) should reflect the switch status (0=Off, 1=Park, 2=Lowbeam, 3=Highbeam).
+  - **Simulator Command:** Observe **Lighting Cmd (PGN 0xFE41** / 65089), Source Address 0x05 (5). **CAN ID to inspect: 0x0CFE4105**. (Unlike the other controls, RAMN encodes this physical switch directly into a Simulator Command).
+
+* **Turn Indicators:**
+  Press the SHIFT joystick left and right.
+  - **Indicator Request:** Observe **OEL (PGN 0xFDCC** / 64972), Source Address 0x05 (5). **CAN ID to inspect: 0x0CFDCC05**. Byte 2 (bits 8-11, SPN 2876) should reflect the request (1=Left, 2=Right, 3=Hazard).
+  - **Blinking Status:** Observe **OEL (PGN 0xFDCC** / 64972), Source Address 0x21 (33). **CAN ID to inspect: 0x18FDCC21**. Byte 2 (bits 8-11, SPN 2876) will toggle between the active side and 0 (Not Active) at the blinking frequency.
+
+All unused bytes in the 8-byte J1939 payloads should remain set to ``0xFF`` (Not Available).
   
    
 .. _quality_troubleshooting:
