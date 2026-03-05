@@ -145,21 +145,21 @@ def test_default_signal_roundtrip(signal_name, range_limit):
     ("Command_Shift", 130, 0, [2]),
     ("Command_Horn", 256, 0, [0]),
     ("Control_Horn", 256, 0, [0, 1]),
-    ("Command_TurnIndicator", 16, 0, [1]),
+    # Command_TurnIndicator now uses specific RAMN mappings (0x0100, 0x0001) instead of 0-15, tested separately
     ("Command_Sidebrake", 4, 0, [0]),
     ("Control_Sidebrake", 4, 0, [0]),
     ("Control_EngineKey", 2, 0, [0]),
     ("Command_Lights", 256, 0, [0]),
-    ("Control_Lights", 16, 0, [0]),
+    ("Control_Lights", 16, 0, [0, 1]),
 ])
 def test_j1939_signal_roundtrip(signal_name, range_limit, tolerance, used_bytes):
-    encode_func = getattr(ramn_can_db_j1939, f"RAMN_Encode_{signal_name}")
-    decode_func = getattr(ramn_can_db_j1939, f"RAMN_Decode_{signal_name}")
-    step = 1 if range_limit <= 4096 else range_limit // 100
-    for val in range(0, range_limit, step):
-        # Initialize payload with zeros to check if C code memsets to 0xFF
-        payload = (ctypes.c_uint8 * 8)(0,0,0,0,0,0,0,0)
-        encode_func(val, payload)
+        encode_func = getattr(ramn_can_db_j1939, f"RAMN_Encode_{signal_name}")
+        decode_func = getattr(ramn_can_db_j1939, f"RAMN_Decode_{signal_name}")
+        step = 1 if range_limit <= 4096 else range_limit // 100
+        for val in range(0, range_limit, step):
+            # Initialize payload with zeros to check if C code memsets to 0xFF
+            payload = (ctypes.c_uint8 * 8)(0,0,0,0,0,0,0,0)
+            encode_func(val, payload)
         
         # Isolation: Unused bytes should be 0xFF (set by C code)
         for i in range(8):
@@ -198,3 +198,35 @@ def test_j1939_shift_joystick_roundtrip():
 
             assert decode_shift(payload, 8) == shift_val
             assert decode_joystick(payload, 8) == joy_val
+
+def test_j1939_turn_indicator_roundtrip():
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Command_TurnIndicator")
+    decode_func = getattr(ramn_can_db_j1939, "RAMN_Decode_Command_TurnIndicator")
+    
+    # 0: None, 0x0100: Left, 0x0001: Right, 0x0101: Hazard
+    for val in [0, 0x0100, 0x0001, 0x0101]:
+        payload = (ctypes.c_uint8 * 8)(0,0,0,0,0,0,0,0)
+        encode_func(val, payload)
+        
+        for i in range(8):
+            if i != 1:
+                assert payload[i] == 0xFF
+                
+        assert decode_func(payload, 8) == val
+
+def test_j1939_control_lights_turn_indicator():
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Lights")
+    decode_func = getattr(ramn_can_db_j1939, "RAMN_Decode_Control_Lights")
+    
+    # Base lights (0-15) combined with turn indicators (0x40 Left, 0x80 Right)
+    test_cases = [0, 15, 0x40, 0x80, 0xC0, 15 | 0x40, 15 | 0x80, 15 | 0xC0]
+    for val in test_cases:
+        payload = (ctypes.c_uint8 * 8)(0,0,0,0,0,0,0,0)
+        encode_func(val, payload)
+        
+        for i in range(8):
+            if i not in [0, 1]:
+                assert payload[i] == 0xFF
+                
+        assert decode_func(payload, 8) == val
+
