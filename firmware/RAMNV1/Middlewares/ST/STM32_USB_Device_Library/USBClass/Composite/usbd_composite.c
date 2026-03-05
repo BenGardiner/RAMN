@@ -116,8 +116,8 @@ __ALIGN_BEGIN static uint8_t USBD_Composite_CfgFSDesc[] __ALIGN_END =
 	USB_DESC_TYPE_ENDPOINT,               // bDescriptorType
 	GSUSB_OUT_EP,                         // bEndpointAddress
 	0x02,                                 // bmAttributes: bulk
-	LOBYTE(GSUSB_RX_DATA_SIZE),           // wMaxPacketSize
-	HIBYTE(GSUSB_RX_DATA_SIZE),
+	LOBYTE(CAN_DATA_MAX_PACKET_SIZE),     // wMaxPacketSize (must be <= 64 for FS bulk)
+	HIBYTE(CAN_DATA_MAX_PACKET_SIZE),
 	0x00,                                 // bInterval:
 	//---------------------------------------------------------------------------
 
