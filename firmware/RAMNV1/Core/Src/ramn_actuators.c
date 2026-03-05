@@ -17,6 +17,7 @@
 #include "ramn_actuators.h"
 #include "ramn_signal_defs.h"
 #include "ramn_can_database.h"
+#include <string.h>
 
 #ifdef EXPANSION_BODY
 // Byte that store the state of each LED of ECU D.
@@ -52,8 +53,7 @@ void RAMN_ACTUATORS_ApplyControls(uint32_t tick)
 #elif defined(EXPANSION_POWERTRAIN) //POWERTRAIN
 	RAMN_Encode_Control_Brake((uint16_t)RAMN_DBC_Handle.control_brake, &msg_control_brake.data->rawData[CAN_SIM_CONTROL_BRAKE_PAYLOAD_OFFSET / 8]);
 	RAMN_Encode_Control_Accel((uint16_t)RAMN_DBC_Handle.control_accel, &msg_control_accel.data->rawData[CAN_SIM_CONTROL_ACCEL_PAYLOAD_OFFSET / 8]);
-	RAMN_Encode_Control_Shift((uint8_t)RAMN_DBC_Handle.control_shift, &msg_control_shift.data->rawData[CAN_SIM_CONTROL_SHIFT_PAYLOAD_OFFSET / 8]);
-	RAMN_Encode_Joystick((uint8_t)RAMN_DBC_Handle.joystick, &msg_control_shift.data->rawData[CAN_SIM_CONTROL_SHIFT_PAYLOAD_OFFSET / 8]);
+	RAMN_Encode_Control_Shift_Joystick((uint8_t)RAMN_DBC_Handle.control_shift, (uint8_t)RAMN_DBC_Handle.joystick, &msg_control_shift.data->rawData[CAN_SIM_CONTROL_SHIFT_PAYLOAD_OFFSET / 8]);
 	RAMN_Encode_Command_Horn((uint8_t)RAMN_DBC_Handle.command_horn, &msg_command_horn.data->rawData[CAN_SIM_COMMAND_HORN_PAYLOAD_OFFSET / 8]);
 	RAMN_Encode_Command_TurnIndicator((uint16_t)RAMN_DBC_Handle.command_turnindicator, &msg_command_turnindicator.data->rawData[CAN_SIM_COMMAND_TURNINDICATOR_PAYLOAD_OFFSET / 8]);
 

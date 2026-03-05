@@ -1,0 +1,112 @@
+VERSION ""
+
+
+NS_ : 
+	NS_DESC_
+	CM_
+	BA_DEF_
+	BA_
+	VAL_
+	CAT_DEF_
+	CAT_
+	FILTER
+	BA_DEF_DEF_
+	EV_DATA_
+	ENVVAR_DATA_
+	SGTYPE_
+	SGTYPE_VAL_
+	BA_DEF_SGTYPE_
+	BA_SGTYPE_
+	SIG_TYPE_REF_
+	VAL_TABLE_
+	SIG_GROUP_
+	SIG_VALTYPE_
+	SIGTYPE_VALTYPE_
+	BO_TX_BU_
+	BA_DEF_REL_
+	BA_REL_
+	BA_DEF_DEF_REL_
+	BU_SG_REL_
+	BU_EV_REL_
+	BU_BO_REL_
+	SG_MUL_VAL_
+
+BS_:
+
+BU_: Engine BrakeSystem Transmission ShiftConsole Steering Controller BodyController InstrumentCluster
+
+BO_ 2566844961 Control_Brake: 8 BodyController
+ SG_ Control_Brake_PedalPos : 8|8@1+ (0.4,0) [0|100] "%" BrakeSystem
+
+BO_ 2348810243 Command_Brake: 8 BrakeSystem
+ SG_ Command_Brake_ExtDecel : 0|16@1+ (0.00048828125,-15.687) [-15.687|15.40687] "m/s2" BrakeSystem
+
+BO_ 2566845473 Control_Accel: 8 BodyController
+ SG_ Control_Accel_PedalPos : 8|8@1+ (0.4,0) [0|100] "%" Engine
+
+BO_ 2348810251 Command_Accel: 8 BrakeSystem
+ SG_ Command_Accel_ReqSpeed : 8|16@1+ (0.125,0) [0|8031.875] "rpm" Engine
+
+BO_ 2365449216 Status_RPM: 8 Engine
+ SG_ Status_RPM_EngineSpeed : 24|16@1+ (0.125,0) [0|8031.875] "rpm" Vector__XXX
+
+BO_ 2566847251 Control_Steering: 8 Steering
+ SG_ Control_Steering_WheelAngle : 0|16@1+ (0.0009765625,-31.374) [-31.374|32.625] "rad" Vector__XXX
+
+BO_ 2364486560 Command_Steering: 8 Controller
+ SG_ Command_Steering_ReqAngle : 0|16@1+ (0.0009765625,-31.374) [-31.374|32.625] "rad" Steering
+
+BO_ 2566845699 Control_Shift: 8 Transmission
+ SG_ Control_Shift_CurrentGear : 24|8@1+ (1,-125) [-125|125] "gear" Vector__XXX
+
+BO_ 2566845701 Joystick: 8 ShiftConsole
+ SG_ Joystick_ReqRange : 32|16@1+ (1,0) [0|255] "range" Vector__XXX
+
+BO_ 2348876549 Command_Shift: 8 ShiftConsole
+ SG_ Command_Shift_ReqGear : 16|8@1+ (1,-125) [-125|125] "gear" Transmission
+
+BO_ 2566910497 Control_Horn: 8 BodyController
+ SG_ Control_Horn_Status : 0|16@1+ (1,0) [0|65535] "" Vector__XXX
+
+BO_ 2566852869 Command_Horn: 8 ShiftConsole
+ SG_ Command_Horn_Req : 0|8@1+ (1,0) [0|255] "" BodyController
+
+BO_ 2566880289 Control_Lights: 8 BodyController
+ SG_ Control_Lights_Switch : 4|4@1+ (1,0) [0|15] "" Vector__XXX
+
+BO_ 2365518085 Command_Lights: 8 ShiftConsole
+ SG_ Command_Lights_Req : 0|8@1+ (1,0) [0|255] "" BodyController
+
+BO_ 2365488133 Command_TurnIndicator: 8 ShiftConsole
+ SG_ Command_TurnIndicator_Req : 8|4@1+ (1,0) [0|15] "" BodyController
+
+BO_ 2566840587 Control_Sidebrake: 8 BrakeSystem
+ SG_ Control_Sidebrake_Status : 0|2@1+ (1,0) [0|3] "" Vector__XXX
+
+BO_ 2566911237 Command_Sidebrake: 8 ShiftConsole
+ SG_ Command_Sidebrake_Req : 2|2@1+ (1,0) [0|3] "" BrakeSystem
+
+BO_ 2566880077 Control_EngineKey: 8 InstrumentCluster
+ SG_ Control_EngineKey_Status : 0|2@1+ (1,0) [0|3] "" Vector__XXX
+
+BA_DEF_ BO_  "VFrameFormat" ENUM  "StandardCAN","ExtendedCAN","reserved","J1939PG";
+BA_DEF_DEF_  "VFrameFormat" "J1939PG";
+
+BA_ "VFrameFormat" BO_ 2566844961 3;
+BA_ "VFrameFormat" BO_ 2348810243 3;
+BA_ "VFrameFormat" BO_ 2566845473 3;
+BA_ "VFrameFormat" BO_ 2348810251 3;
+BA_ "VFrameFormat" BO_ 2365449216 3;
+BA_ "VFrameFormat" BO_ 2566847251 3;
+BA_ "VFrameFormat" BO_ 2364486560 3;
+BA_ "VFrameFormat" BO_ 2566845699 3;
+BA_ "VFrameFormat" BO_ 2566845701 3;
+BA_ "VFrameFormat" BO_ 2348876549 3;
+BA_ "VFrameFormat" BO_ 2566910497 3;
+BA_ "VFrameFormat" BO_ 2566852869 3;
+BA_ "VFrameFormat" BO_ 2566880289 3;
+BA_ "VFrameFormat" BO_ 2365518085 3;
+BA_ "VFrameFormat" BO_ 2365488133 3;
+BA_ "VFrameFormat" BO_ 2566840587 3;
+BA_ "VFrameFormat" BO_ 2566911237 3;
+BA_ "VFrameFormat" BO_ 2566880077 3;

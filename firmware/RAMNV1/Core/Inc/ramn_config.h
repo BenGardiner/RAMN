@@ -19,6 +19,8 @@
 #ifndef INC_RAMN_CONFIG_H_
 #define INC_RAMN_CONFIG_H_
 
+#define ENABLE_J1939_MODE
+
 #if !defined(TARGET_ECUA) && !defined(TARGET_ECUB) && !defined(TARGET_ECUC) && !defined(TARGET_ECUD)
 // Define which ECU the source code should be built for.
 // You need to specify which ECU you are trying to debug here.
