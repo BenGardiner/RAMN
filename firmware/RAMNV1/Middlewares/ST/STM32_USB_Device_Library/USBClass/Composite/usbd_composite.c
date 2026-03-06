@@ -145,13 +145,17 @@ __ALIGN_BEGIN static uint8_t USBD_Composite_CfgFSDesc[] __ALIGN_END =
 
 	//---------------------------------------------------------------------------
 	// DFU Interface Descriptor
+	// WARNING: This interface will show Code 28 "no driver" in Windows
+	// Device Manager. This is expected — Windows has no built-in DFU
+	// runtime driver. The gs_usb interface (interface 0) is separate and
+	// uses WinUSB via the MS OS Compatible ID descriptor.
 	//---------------------------------------------------------------------------
 	0x09,                                 // bLength
 	USB_DESC_TYPE_INTERFACE,              // bDescriptorType
 	GSUSB_WINDEX + 1,                     // bInterfaceNumber
 	0x00,                                 // bAlternateSetting
 	0x00,                                 // bNumEndpoints
-	0xFE,                                 // bInterfaceClass: Vendor Specific
+	0xFE,                                 // bInterfaceClass: Application Specific (DFU)
 	0x01,                                 // bInterfaceSubClass
 	0x01,                                 // bInterfaceProtocol : Runtime mode
 	DFU_INTERFACE_STR_INDEX,              // iInterface
