@@ -1,22 +1,22 @@
 #!/bin/bash
 # Inner build script — runs inside the STM32CubeIDE Docker container or locally.
-# Usage: _build_ecu.sh TARGET_ECUx [Release|Debug] [--skip-import] [--no-clean] [--quiet]
+# Usage: _build_ecu.sh TARGET_ECUx [Release|Debug] [--skip-import] [--no-clean] [--no-quiet]
 # Set WORKSPACE env var to override the default /workspace path for local builds.
 
-ECU="${1:?Usage: $0 TARGET_ECUx [Release|Debug] [--skip-import] [--no-clean] [--quiet]}"
+ECU="${1:?Usage: $0 TARGET_ECUx [Release|Debug] [--skip-import] [--no-clean] [--no-quiet]}"
 PROJECT_CONF="${2:-Release}"
 shift 2 2>/dev/null || shift $#
 
 SKIP_IMPORT=false
 BUILD_MODE="-cleanBuild"
 EXTRA_DEFINES=""
-QUIET=false
+QUIET=true
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--skip-import) SKIP_IMPORT=true; shift ;;
 		--no-clean) BUILD_MODE="-build"; shift ;;
-		--quiet) QUIET=true; shift ;;
+		--no-quiet) QUIET=false; shift ;;
 		-D) EXTRA_DEFINES="${EXTRA_DEFINES} -D $2"; shift 2 ;;
 		-D*) EXTRA_DEFINES="${EXTRA_DEFINES} $1"; shift ;;
 		*) shift ;;
