@@ -64,7 +64,7 @@
 
 #define USBD_LANGID_STRING            	1033
 #define USBD_MANUFACTURER_STRING      	"Toyota Motor Corporation"
-#define USBD_PRODUCT_STRING           	"RAMN USB Composite Device"
+#define USBD_PRODUCT_STRING           	"RAMN gs_usb Device"
 #define USBD_CONFIGURATION_STRING     	"MDC Config"
 #define USBD_INTERFACE_STRING         	"MDC Interface"
 
