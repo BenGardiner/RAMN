@@ -84,6 +84,18 @@ __ALIGN_BEGIN static uint8_t USBD_Composite_CfgFSDesc[] __ALIGN_END =
 
 #ifdef ENABLE_GSUSB
 	//---------------------------------------------------------------------------
+	// IAD for GS_USB + DFU
+	//---------------------------------------------------------------------------
+	0x08,                                 // bLength: Interface Association Descriptor size
+	0x0B,                                 // bDescriptorType: IAD
+	GSUSB_WINDEX,                         // bFirstInterface: gs_usb interface number
+	0x02,                                 // bInterfaceCount: gs_usb + DFU
+	0xFF,                                 // bFunctionClass: Vendor Specific
+	0xFF,                                 // bFunctionSubClass: Vendor Specific
+	0xFF,                                 // bFunctionProtocol: Vendor Specific
+	0x00,                                 // iFunction
+
+	//---------------------------------------------------------------------------
 	// GS_USB Interface Descriptor
 	//---------------------------------------------------------------------------
 	0x09,                                 // bLength
