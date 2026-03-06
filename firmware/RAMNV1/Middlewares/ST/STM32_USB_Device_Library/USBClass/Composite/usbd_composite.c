@@ -51,7 +51,10 @@ void (*USBD_serialCloseCallback_ptr)(USBD_HandleTypeDef* hUsbDeviceFS, uint8_t i
 /*=============================================================================*
 *                            Static global variable                            *
 *==============================================================================*/
-/* USB Standard Device Descriptor */
+/* WARNING: GetDeviceQualifierDescriptor callback MUST NOT be NULL.
+ * STM32 USB library zero-initializes dev_speed to USBD_SPEED_HIGH (0).
+ * Before HAL_PCD_ResetCallback sets speed to FULL, a Device Qualifier
+ * request will call this callback; if NULL, the device hard-faults. */
 __ALIGN_BEGIN static uint8_t USBD_Composite_DeviceQualifierDesc[USB_LEN_DEV_QUALIFIER_DESC] __ALIGN_END =
 {
 	USB_LEN_DEV_QUALIFIER_DESC,
@@ -84,12 +87,16 @@ __ALIGN_BEGIN static uint8_t USBD_Composite_CfgFSDesc[] __ALIGN_END =
 
 #ifdef ENABLE_GSUSB
 	//---------------------------------------------------------------------------
-	// IAD for GS_USB + DFU
+	// IAD for GS_USB
+	// WARNING: IAD is required for composite device enumeration on AMD
+	// xHCI controllers. bInterfaceCount MUST be 1 (gs_usb only).
+	// If set to 2, Windows groups both interfaces into one function,
+	// resulting in Code 28 "no driver" and no DFU device.
 	//---------------------------------------------------------------------------
 	0x08,                                 // bLength: Interface Association Descriptor size
 	0x0B,                                 // bDescriptorType: IAD
 	GSUSB_WINDEX,                         // bFirstInterface: gs_usb interface number
-	0x01,                                 // bInterfaceCount: gs_usb only
+	0x01,                                 // bInterfaceCount
 	0xFF,                                 // bFunctionClass: Vendor Specific
 	0xFF,                                 // bFunctionSubClass: Vendor Specific
 	0xFF,                                 // bFunctionProtocol: Vendor Specific
@@ -123,12 +130,15 @@ __ALIGN_BEGIN static uint8_t USBD_Composite_CfgFSDesc[] __ALIGN_END =
 
 	//---------------------------------------------------------------------------
 	// EP2 descriptor
+	// WARNING: wMaxPacketSize MUST be <= 64 for Full Speed bulk endpoints
+	// per USB 2.0 §5.8.3. Larger values cause enumeration failure on
+	// AMD xHCI controllers.
 	//---------------------------------------------------------------------------
 	0x07,                                 // bLength
 	USB_DESC_TYPE_ENDPOINT,               // bDescriptorType
 	GSUSB_OUT_EP,                         // bEndpointAddress
 	0x02,                                 // bmAttributes: bulk
-	LOBYTE(CAN_DATA_MAX_PACKET_SIZE),     // wMaxPacketSize (must be <= 64 for FS bulk)
+	LOBYTE(CAN_DATA_MAX_PACKET_SIZE),     // wMaxPacketSize
 	HIBYTE(CAN_DATA_MAX_PACKET_SIZE),
 	0x00,                                 // bInterval:
 	//---------------------------------------------------------------------------

@@ -72,19 +72,19 @@
 #define GSUSB_WINDEX                    0x00   /* gs_usb interface number */
 #define CDC_WINDEX                      0x02   /* CDC interface number */
 #define USBD_MAX_NUM_INTERFACES     	4U
-#define USB_COMPOSITE_CONFIG_DESC_SIZ   124
+#define USB_COMPOSITE_CONFIG_DESC_SIZ   124  /* 108 base + 8 GS_USB IAD + 8 CDC IAD */
 #endif
 
 #if defined(ENABLE_CDC) && !defined(ENABLE_GSUSB)
 #define CDC_WINDEX                      0x00   /* CDC interface number */
 #define USBD_MAX_NUM_INTERFACES			2U
-#define USB_COMPOSITE_CONFIG_DESC_SIZ   75
+#define USB_COMPOSITE_CONFIG_DESC_SIZ   75  /* 67 base + 8 for CDC IAD */
 #endif
 
 #if !defined(ENABLE_CDC) && defined(ENABLE_GSUSB)
 #define GSUSB_WINDEX                    0x00   /* gs_usb interface number */
 #define USBD_MAX_NUM_INTERFACES         2U
-#define USB_COMPOSITE_CONFIG_DESC_SIZ   58
+#define USB_COMPOSITE_CONFIG_DESC_SIZ   58  /* 50 base + 8 for GS_USB IAD */
 #endif
 
 //TODO: investigate issue below

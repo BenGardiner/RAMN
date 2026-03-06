@@ -1471,11 +1471,11 @@ HAL_StatusTypeDef HAL_PCD_EP_Receive(PCD_HandleTypeDef *hpcd, uint8_t ep_addr, u
   ep->num = ep_addr & EP_ADDR_MSK;
 
   /* USER CODE BEGIN HAL_PCD_EP_Receive_Concurrency_Fix */
-  /* Disable USB IRQ around lock/xfer/unlock to prevent HAL_PCD_EP_Receive
-   * and HAL_PCD_EP_Transmit from preempting each other, avoiding USBD_BUSY
-   * deadlocks on aggressive xHCI host controllers (e.g. AMD).
-   * See: https://community.st.com/t5/stm32-mcus-embedded-software/usb-cdc-device-receive-fails-on-transmit/td-p/472929
-   * NOTE: STM32CubeMX will overwrite this file on regeneration; reapply this fix. */
+  /* WARNING: Disable USB IRQ to prevent HAL_PCD_EP_Receive and
+   * HAL_PCD_EP_Transmit from preempting each other, avoiding
+   * USBD_BUSY deadlocks on AMD xHCI controllers.
+   * Ref: https://community.st.com/t5/stm32-mcus-embedded-software/usb-cdc-device-receive-fails-on-transmit/td-p/472929
+   * WARNING: STM32CubeMX will overwrite this file; reapply this fix. */
   HAL_NVIC_DisableIRQ(USB_FS_IRQn);
   __HAL_LOCK(hpcd);
 
@@ -1522,11 +1522,11 @@ HAL_StatusTypeDef HAL_PCD_EP_Transmit(PCD_HandleTypeDef *hpcd, uint8_t ep_addr, 
   ep->num = ep_addr & EP_ADDR_MSK;
 
   /* USER CODE BEGIN HAL_PCD_EP_Transmit_Concurrency_Fix */
-  /* Disable USB IRQ around lock/xfer/unlock to prevent HAL_PCD_EP_Transmit
-   * and HAL_PCD_EP_Receive from preempting each other, avoiding USBD_BUSY
-   * deadlocks on aggressive xHCI host controllers (e.g. AMD).
-   * See: https://community.st.com/t5/stm32-mcus-embedded-software/usb-cdc-device-receive-fails-on-transmit/td-p/472929
-   * NOTE: STM32CubeMX will overwrite this file on regeneration; reapply this fix. */
+  /* WARNING: Disable USB IRQ to prevent HAL_PCD_EP_Transmit and
+   * HAL_PCD_EP_Receive from preempting each other, avoiding
+   * USBD_BUSY deadlocks on AMD xHCI controllers.
+   * Ref: https://community.st.com/t5/stm32-mcus-embedded-software/usb-cdc-device-receive-fails-on-transmit/td-p/472929
+   * WARNING: STM32CubeMX will overwrite this file; reapply this fix. */
   HAL_NVIC_DisableIRQ(USB_FS_IRQn);
   __HAL_LOCK(hpcd);
 

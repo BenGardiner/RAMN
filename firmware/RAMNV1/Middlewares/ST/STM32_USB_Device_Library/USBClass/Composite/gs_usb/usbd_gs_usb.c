@@ -77,7 +77,9 @@ const struct gs_device_bt_const gscan_btconst = {
 };
 
 
-/*  Microsoft Compatible ID Feature Descriptor  */
+/* WARNING: Only 1 section mapping interface 0 to WINUSB. Do NOT add a
+ * WINUSB section for interface 1 (DFU); doing so prevents Windows from
+ * assigning the DFU class driver, and the DFU device will not appear. */
 static const uint8_t USBD_MS_COMP_ID_FEATURE_DESC[] = {
 		0x28, 0x00, 0x00, 0x00, /* length */
 		0x00, 0x01,             /* version 1.0 */
@@ -162,6 +164,8 @@ USBD_StatusTypeDef USBD_GSUSB_CustomDeviceRequest(USBD_HandleTypeDef *pdev, USBD
 			break;
 		}
 
+		/* WARNING: Must STALL unrecognized vendor requests.
+		 * Windows enumeration fails without this. */
 		USBD_CtlError(pdev, req);
 		return USBD_OK;
 	}
@@ -316,12 +320,16 @@ USBD_StatusTypeDef USBD_GSUSB_Setup(USBD_HandleTypeDef *pdev, USBD_SetupReqTyped
 			break;
 
 		default:
+			/* WARNING: Must STALL unknown standard requests
+			 * for Windows enumeration on AMD xHCI. */
 			USBD_CtlError(pdev, req);
 			break;
 		}
 		break;
 
 		default:
+			/* WARNING: Must STALL unhandled request types
+			 * for Windows enumeration on AMD xHCI. */
 			USBD_CtlError(pdev, req);
 			break;
 	}
