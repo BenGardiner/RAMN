@@ -423,7 +423,7 @@ static uint8_t USBD_Composite_Setup(USBD_HandleTypeDef *pdev, USBD_SetupReqTyped
 //		ret = USBD_OK; //
 #endif
 	default:
-		//Error_Handler();
+		ret = USBD_FAIL;
 		break;
 	}
 
