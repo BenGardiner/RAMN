@@ -79,7 +79,7 @@ __ALIGN_BEGIN static uint8_t USBD_Composite_CfgFSDesc[] __ALIGN_END =
 	USB_DESC_TYPE_CONFIGURATION,          // bDescriptorType: Configuration
 	USB_COMPOSITE_CONFIG_DESC_SIZ,        // wTotalLength:no of returned bytes
 	0x00,
-	USBD_MAX_NUM_INTERFACES,              // bNumInterfaces: 2 or 4
+	USBD_MAX_NUM_INTERFACES,              // bNumInterfaces: 1 or 3
 	0x01,                                 // bConfigurationValue: Configuration value
 	0x00,                                 // iConfiguration: Index of string descriptor describing the configuration
 	0x80,                                 // bmAttributes: Bus powered
@@ -90,8 +90,6 @@ __ALIGN_BEGIN static uint8_t USBD_Composite_CfgFSDesc[] __ALIGN_END =
 	// IAD for GS_USB
 	// WARNING: IAD is required for composite device enumeration on AMD
 	// xHCI controllers. bInterfaceCount MUST be 1 (gs_usb only).
-	// If set to 2, Windows groups both interfaces into one function,
-	// resulting in Code 28 "no driver" and no DFU device.
 	//---------------------------------------------------------------------------
 	0x08,                                 // bLength: Interface Association Descriptor size
 	0x0B,                                 // bDescriptorType: IAD
@@ -142,33 +140,6 @@ __ALIGN_BEGIN static uint8_t USBD_Composite_CfgFSDesc[] __ALIGN_END =
 	HIBYTE(CAN_DATA_MAX_PACKET_SIZE),
 	0x00,                                 // bInterval:
 	//---------------------------------------------------------------------------
-
-	//---------------------------------------------------------------------------
-	// DFU Interface Descriptor
-	// WARNING: This interface will show Code 28 "no driver" in Windows
-	// Device Manager. This is expected — Windows has no built-in DFU
-	// runtime driver. The gs_usb interface (interface 0) is separate and
-	// uses WinUSB via the MS OS Compatible ID descriptor.
-	//---------------------------------------------------------------------------
-	0x09,                                 // bLength
-	USB_DESC_TYPE_INTERFACE,              // bDescriptorType
-	GSUSB_WINDEX + 1,                     // bInterfaceNumber
-	0x00,                                 // bAlternateSetting
-	0x00,                                 // bNumEndpoints
-	0xFE,                                 // bInterfaceClass: Application Specific (DFU)
-	0x01,                                 // bInterfaceSubClass
-	0x01,                                 // bInterfaceProtocol : Runtime mode
-	DFU_INTERFACE_STR_INDEX,              // iInterface
-
-	//---------------------------------------------------------------------------
-	// Run-Time DFU Functional Descriptor
-	//---------------------------------------------------------------------------
-	0x09,                                 // bLength
-	0x21,                                 // bDescriptorType: DFU FUNCTIONAL
-	0x0B,                                 // bmAttributes: detach, upload, download
-	0xFF, 0x00,                           // wDetachTimeOut
-	0x00, 0x64,                           // wTransferSize
-	0x1a, 0x01,                           // bcdDFUVersion: 1.1a
 
 #endif
 
@@ -658,9 +629,6 @@ static uint8_t *USBD_Composite_GetStrdesc(USBD_HandleTypeDef *pdev, uint8_t inde
 	UNUSED(pdev);
 
 	switch (index) {
-		case DFU_INTERFACE_STR_INDEX:
-			USBD_GetString(GSUSB_DFU_INTERFACE_STRING_FS, USBD_StrDesc, length);
-			return USBD_StrDesc;
 		case 0xEE:
 			*length = sizeof(usbd_gscan_winusb_str);
 			return usbd_gscan_winusb_str;

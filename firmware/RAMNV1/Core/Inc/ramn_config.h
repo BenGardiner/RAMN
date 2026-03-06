@@ -127,7 +127,6 @@
 #define GS_HOST_FRAME_SIZE     	80
 #define CAN_QUEUE_SIZE			512
 #endif
-#define GSUSB_DFU_INTERFACE_STRING_FS		(uint8_t*) "RAMN DFU interface"
 
 #endif
 
