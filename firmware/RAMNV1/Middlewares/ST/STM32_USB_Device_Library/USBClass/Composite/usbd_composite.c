@@ -89,7 +89,7 @@ __ALIGN_BEGIN static uint8_t USBD_Composite_CfgFSDesc[] __ALIGN_END =
 	0x08,                                 // bLength: Interface Association Descriptor size
 	0x0B,                                 // bDescriptorType: IAD
 	GSUSB_WINDEX,                         // bFirstInterface: gs_usb interface number
-	0x02,                                 // bInterfaceCount: gs_usb + DFU
+	0x01,                                 // bInterfaceCount: gs_usb only
 	0xFF,                                 // bFunctionClass: Vendor Specific
 	0xFF,                                 // bFunctionSubClass: Vendor Specific
 	0xFF,                                 // bFunctionProtocol: Vendor Specific

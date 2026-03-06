@@ -79,21 +79,13 @@ const struct gs_device_bt_const gscan_btconst = {
 
 /*  Microsoft Compatible ID Feature Descriptor  */
 static const uint8_t USBD_MS_COMP_ID_FEATURE_DESC[] = {
-		0x40, 0x00, 0x00, 0x00, /* length */
+		0x28, 0x00, 0x00, 0x00, /* length */
 		0x00, 0x01,             /* version 1.0 */
 		0x04, 0x00,             /* descr index (0x0004) */
-		0x02,                   /* number of sections */
+		0x01,                   /* number of sections */
 		0x00, 0x00, 0x00, 0x00, /* reserved */
 		0x00, 0x00, 0x00,
 		0x00,                   /* interface number */
-		0x01,                   /* reserved */
-		0x57, 0x49, 0x4E, 0x55, /* compatible ID ("WINUSB\0\0") */
-		0x53, 0x42, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00, /* sub-compatible ID */
-		0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00, /* reserved */
-		0x00, 0x00,
-		0x01,                   /* interface number */
 		0x01,                   /* reserved */
 		0x57, 0x49, 0x4E, 0x55, /* compatible ID ("WINUSB\0\0") */
 		0x53, 0x42, 0x00, 0x00,
@@ -169,6 +161,9 @@ USBD_StatusTypeDef USBD_GSUSB_CustomDeviceRequest(USBD_HandleTypeDef *pdev, USBD
 			}
 			break;
 		}
+
+		USBD_CtlError(pdev, req);
+		return USBD_OK;
 	}
 
 	return USBD_FAIL;
@@ -318,13 +313,16 @@ USBD_StatusTypeDef USBD_GSUSB_Setup(USBD_HandleTypeDef *pdev, USBD_SetupReqTyped
 			break;
 
 		case USB_REQ_SET_INTERFACE:
+			break;
+
 		default:
+			USBD_CtlError(pdev, req);
 			break;
 		}
 		break;
 
 		default:
-			ret = USBD_FAIL;
+			USBD_CtlError(pdev, req);
 			break;
 	}
 
