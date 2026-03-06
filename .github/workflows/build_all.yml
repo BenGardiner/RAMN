@@ -41,7 +41,7 @@ jobs:
           DOCKER_STM32CUBEIDE_TAG: ${{ matrix.cubeide_docker_tag }}
         run: |
           chmod +x scripts/build/docker_BUILD_Clean_${{ matrix.conf }}.sh scripts/build/_build_ecu.sh
-          bash scripts/build/docker_BUILD_Clean_${{ matrix.conf }}.sh
+          bash scripts/build/docker_BUILD_Clean_${{ matrix.conf }}.sh --no-quiet
 
       - name: Collect hex file sizes
         if: always()
