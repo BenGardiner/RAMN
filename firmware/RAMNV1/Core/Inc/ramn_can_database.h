@@ -55,4 +55,8 @@ uint16_t RAMN_Decode_Command_Lights(const uint8_t* payload, uint32_t dlc);
 void RAMN_Encode_Control_Lights(uint8_t value, uint8_t* payload);
 uint8_t RAMN_Decode_Control_Lights(const uint8_t* payload, uint32_t dlc);
 
+void RAMN_Encode_DM1(uint8_t value, uint8_t* payload);
+void RAMN_Encode_CCVS1(uint8_t value, uint8_t* payload);
+void RAMN_Encode_EngineRun(uint8_t value, uint8_t* payload);
+
 #endif // RAMN_CAN_DATABASE_H

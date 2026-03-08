@@ -36,7 +36,7 @@ static RAMN_PeriodicFDCANTx_t* periodicTxCANMsgs[] = {
 		&msg_control_brake, &msg_control_accel, &msg_control_shift, &msg_command_horn, &msg_command_turnindicator
 #endif
 #if defined(TARGET_ECUD)
-		&msg_control_enginekey, &msg_control_lights
+		&msg_dm1, &msg_ccvs1, &msg_engine_run, &msg_control_enginekey, &msg_control_lights
 #endif
 };
 

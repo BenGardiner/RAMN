@@ -571,4 +571,31 @@ uint8_t RAMN_Decode_Control_Lights(const uint8_t* payload, uint32_t dlc) {
     
     return lights;
 }
+
+void RAMN_Encode_DM1(uint8_t value, uint8_t* payload) {
+    memset(payload, 0xFF, 8);
+    uint8_t mil = (value & 0x02) ? 1 : 0; // LED_CHECKENGINE
+    // Byte 0: MIL (7-6), Red Stop (5-4)=3, AWL (3-2)=3, Protect (1-0)=3
+    payload[0] = (mil << 6) | 0x3F;
+    payload[1] = 0xFF; // Flash states Not Available
+    // No Active Faults
+    payload[2] = 0x00;
+    payload[3] = 0x00;
+    payload[4] = 0x00;
+    payload[5] = 0x00;
+}
+
+void RAMN_Encode_CCVS1(uint8_t value, uint8_t* payload) {
+    memset(payload, 0xFF, 8);
+    uint8_t pb_state = (value & 0x04) ? 1 : 0; // LED_SIDEBRAKE
+    // SPN 70 in Byte 4 (0-indexed 3), bits 4-3 (1-indexed), so shift by 2
+    payload[3] = (payload[3] & 0xF3) | (uint8_t)(pb_state << 2);
+}
+
+void RAMN_Encode_EngineRun(uint8_t value, uint8_t* payload) {
+    memset(payload, 0xFF, 8);
+    uint8_t spn_val = (value & 0x01) ? 1 : 0; // LED_BATTERY
+    // SPN 3046 (Transit Run Status). Byte 3 (bits 3-4, 1-indexed) -> payload[2] bits 2-3. PGN 64960.
+    payload[2] = (payload[2] & 0xF3) | (uint8_t)(spn_val << 2);
+}
 #endif

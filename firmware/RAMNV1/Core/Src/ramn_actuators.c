@@ -17,6 +17,7 @@
 #include "ramn_actuators.h"
 #include "ramn_signal_defs.h"
 #include "ramn_can_database.h"
+#include "ramn_vehicle_specific.h"
 #include <string.h>
 
 #ifdef EXPANSION_BODY
@@ -60,13 +61,19 @@ void RAMN_ACTUATORS_ApplyControls(uint32_t tick)
 #elif defined(EXPANSION_BODY) //BODY
 	RAMN_Encode_Control_EngineKey((uint8_t)RAMN_DBC_Handle.control_enginekey, &msg_control_enginekey.data->rawData[CAN_SIM_CONTROL_ENGINEKEY_PAYLOAD_OFFSET / 8]);
 	RAMN_Encode_Control_Lights((uint8_t)RAMN_DBC_Handle.control_lights, &msg_control_lights.data->rawData[CAN_SIM_CONTROL_LIGHTS_PAYLOAD_OFFSET / 8]);
-
-#if (LED_TEST_DURATION_MS > 0)
-
-	if((tick < LED_TEST_DURATION_MS) && (LEDTestOver == False)) RAMN_DBC_Handle.control_lights = 0xFF;
-	else LEDTestOver = True;
-
+#ifdef ENABLE_J1939_MODE
+#if defined(TARGET_ECUD)
+	RAMN_Encode_DM1((uint8_t)RAMN_DBC_Handle.control_lights, &msg_dm1.data->rawData[0]);
+	RAMN_Encode_CCVS1((uint8_t)RAMN_DBC_Handle.control_lights, &msg_ccvs1.data->rawData[0]);
+	RAMN_Encode_EngineRun((uint8_t)RAMN_DBC_Handle.control_lights, &msg_engine_run.data->rawData[0]);
 #endif
-	RAMN_SPI_UpdateLED((uint8_t*)&(RAMN_DBC_Handle.control_lights));
+#endif
+
+	LEDState = (uint8_t)RAMN_DBC_Handle.control_lights;
+#if (LED_TEST_DURATION_MS > 0)
+	if((tick < LED_TEST_DURATION_MS) && (LEDTestOver == False)) LEDState = 0xFF;
+	else LEDTestOver = True;
+#endif
+	RAMN_SPI_UpdateLED(&LEDState);
 #endif
 }

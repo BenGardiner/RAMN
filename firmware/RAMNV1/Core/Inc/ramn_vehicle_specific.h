@@ -324,6 +324,36 @@
   #define CAN_SIM_CONTROL_HORN_COUNTER_OFFSET -1
   #define CAN_SIM_CONTROL_HORN_CRC_OFFSET -1
 
+  #define CAN_SIM_DM1_CANID    J1939_ID(6, 0, 0, 254, 234, J1939_SA_BODY_CTRL)
+  #define CAN_SIM_DM1_PERIODMS 1000
+  #define CAN_SIM_DM1_IDTYPE   CAN_SIM_J1939_IDTYPE
+  #define CAN_SIM_DM1_FORMAT   CAN_SIM_J1939_FORMAT
+  #define CAN_SIM_DM1_BRS      CAN_SIM_J1939_BRS
+  #define CAN_SIM_DM1_DLC      CAN_SIM_J1939_DLC
+  #define CAN_SIM_DM1_PAYLOAD_OFFSET -1
+  #define CAN_SIM_DM1_COUNTER_OFFSET -1
+  #define CAN_SIM_DM1_CRC_OFFSET -1
+
+  #define CAN_SIM_CCVS1_CANID    J1939_ID(6, 0, 0, 254, 241, J1939_SA_BODY_CTRL)
+  #define CAN_SIM_CCVS1_PERIODMS 100
+  #define CAN_SIM_CCVS1_IDTYPE   CAN_SIM_J1939_IDTYPE
+  #define CAN_SIM_CCVS1_FORMAT   CAN_SIM_J1939_FORMAT
+  #define CAN_SIM_CCVS1_BRS      CAN_SIM_J1939_BRS
+  #define CAN_SIM_CCVS1_DLC      CAN_SIM_J1939_DLC
+  #define CAN_SIM_CCVS1_PAYLOAD_OFFSET -1
+  #define CAN_SIM_CCVS1_COUNTER_OFFSET -1
+  #define CAN_SIM_CCVS1_CRC_OFFSET -1
+
+  #define CAN_SIM_ENGINE_RUN_CANID    J1939_ID(6, 0, 0, 253, 192, J1939_SA_BODY_CTRL)
+  #define CAN_SIM_ENGINE_RUN_PERIODMS 100
+  #define CAN_SIM_ENGINE_RUN_IDTYPE   CAN_SIM_J1939_IDTYPE
+  #define CAN_SIM_ENGINE_RUN_FORMAT   CAN_SIM_J1939_FORMAT
+  #define CAN_SIM_ENGINE_RUN_BRS      CAN_SIM_J1939_BRS
+  #define CAN_SIM_ENGINE_RUN_DLC      CAN_SIM_J1939_DLC
+  #define CAN_SIM_ENGINE_RUN_PAYLOAD_OFFSET -1
+  #define CAN_SIM_ENGINE_RUN_COUNTER_OFFSET -1
+  #define CAN_SIM_ENGINE_RUN_CRC_OFFSET -1
+
 #else
   #include "ramn_can_ids_default.h"
 #endif
@@ -409,6 +439,9 @@ extern RAMN_PeriodicFDCANTx_t msg_command_turnindicator;
 #endif
 
 #if defined(TARGET_ECUD)
+extern RAMN_PeriodicFDCANTx_t msg_dm1;
+extern RAMN_PeriodicFDCANTx_t msg_ccvs1;
+extern RAMN_PeriodicFDCANTx_t msg_engine_run;
 extern RAMN_PeriodicFDCANTx_t msg_control_enginekey;
 extern RAMN_PeriodicFDCANTx_t msg_control_lights;
 #endif
