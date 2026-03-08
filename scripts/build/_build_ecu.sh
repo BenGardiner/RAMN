@@ -28,17 +28,29 @@ WORKSPACE="${WORKSPACE:-/workspace}"
 PROJECT_WORKSPACE="${WORKSPACE}/firmware/${PROJECT_NAME}"
 
 set -e
+set -o pipefail
 
 if [ "$QUIET" = true ]; then
-	BUILD_LOG=$(mktemp)
-	trap 'rc=$?; if [ $rc -ne 0 ] && [ -f "$BUILD_LOG" ]; then cat "$BUILD_LOG"; fi; rm -f "$BUILD_LOG"; exit $rc' EXIT
+	QUIET_FILTER='
+	BEGIN { dots=0 }
+	/Opening/ { if (dots) { printf "\n"; dots=0 }; print; fflush(); next }
+	/arm-none-eabi-g/ { last_cc=$0; printf "."; fflush(); dots=1; next }
+	/[Ww]arning:|[Ee]rror:/ {
+		if (dots) { printf "\n"; dots=0 }
+		if (last_cc != "" && last_cc != shown_cc) { print last_cc; shown_cc=last_cc }
+		print; fflush()
+		next
+	}
+	/Build Finished/ { if (dots) { printf "\n"; dots=0 }; print; fflush(); next }
+	END { if (dots) printf "\n" }
+	'
 fi
 
 if [ "$SKIP_IMPORT" = false ]; then
 	# STM32CubeIDE >= 1.18.0 (docker tag >= 15.0) replaced -import with -importAll
 	IMPORT_FLAG="${STM32_IMPORT_FLAG:--import}"
 	if [ "$QUIET" = true ]; then
-		stm32cubeide --launcher.suppressErrors -nosplash -application org.eclipse.cdt.managedbuilder.core.headlessbuild -data /tmp/stm-workspace ${IMPORT_FLAG} ${PROJECT_WORKSPACE} >> "$BUILD_LOG" 2>&1
+		stm32cubeide --launcher.suppressErrors -nosplash -application org.eclipse.cdt.managedbuilder.core.headlessbuild -data /tmp/stm-workspace ${IMPORT_FLAG} ${PROJECT_WORKSPACE} 2>&1 | awk "$QUIET_FILTER"
 	else
 		stm32cubeide --launcher.suppressErrors -nosplash -application org.eclipse.cdt.managedbuilder.core.headlessbuild -data /tmp/stm-workspace ${IMPORT_FLAG} ${PROJECT_WORKSPACE}
 	fi
@@ -49,8 +61,7 @@ fi
 find "${WORKSPACE}" -type f -exec touch -c {} + 2>/dev/null || true
 
 if [ "$QUIET" = true ]; then
-	headless-build.sh -data /tmp/stm-workspace ${BUILD_MODE} ${PROJECT_NAME}/${PROJECT_CONF} -D ${ECU} ${EXTRA_DEFINES} >> "$BUILD_LOG" 2>&1
-	grep "Build Finished" "$BUILD_LOG" || true
+	headless-build.sh -data /tmp/stm-workspace ${BUILD_MODE} ${PROJECT_NAME}/${PROJECT_CONF} -D ${ECU} ${EXTRA_DEFINES} 2>&1 | awk "$QUIET_FILTER"
 else
 	headless-build.sh -data /tmp/stm-workspace ${BUILD_MODE} ${PROJECT_NAME}/${PROJECT_CONF} -D ${ECU} ${EXTRA_DEFINES}
 fi
