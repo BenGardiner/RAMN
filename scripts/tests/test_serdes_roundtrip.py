@@ -116,7 +116,7 @@ def test_ctypes_loaded():
     ("Control_Steering", 65536),
     ("Command_Shift", 256),
     ("Command_Horn", 256),
-    ("Control_Horn", 256),
+    ("Control_Horn", 4),
     ("Command_TurnIndicator", 65536),
     ("Command_Sidebrake", 65536),
     ("Control_Sidebrake", 256),
@@ -141,15 +141,13 @@ def test_default_signal_roundtrip(signal_name, range_limit):
     ("Control_Accel", 4096, 20, [1]),
     ("Status_RPM", 65536, 0, [3, 4]),
     ("Command_Steering", 65536, 0, [0, 1]),
-    ("Control_Steering", 65536, 0, [0, 1]),
+    ("Control_Steering", 35456, 0, [0, 1]),
     ("Command_Shift", 130, 0, [2]),
     ("Command_Horn", 256, 0, [0]),
-    ("Control_Horn", 256, 0, [0, 1]),
+    ("Control_Horn", 4, 0, [3]),
     # Command_TurnIndicator now uses specific RAMN mappings (0x0100, 0x0001) instead of 0-15, tested separately
     ("Command_Sidebrake", 4, 0, [0]),
-    ("Control_Sidebrake", 4, 0, [0]),
-    ("Control_EngineKey", 3, 0, [0]),
-    ("Command_Lights", 256, 0, [0]),
+    ("Control_Sidebrake", 4, 0, [3]),
 ])
 def test_j1939_signal_roundtrip(signal_name, range_limit, tolerance, used_bytes):
     encode_func = getattr(ramn_can_db_j1939, f"RAMN_Encode_{signal_name}")
@@ -167,6 +165,383 @@ def test_j1939_signal_roundtrip(signal_name, range_limit, tolerance, used_bytes)
         
         decoded_val = decode_func(payload, 8)
         assert abs(int(decoded_val) - val) <= tolerance, f"J1939 Roundtrip failed for {signal_name} at value {val}: got {decoded_val}, expected {val} +/- {tolerance}"
+def test_j1939_command_brake_pretty_decode():
+    import pretty_j1939.describe
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Command_Brake")
+    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    
+    # 0 -> 0 m/s2
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(0, payload)
+    desc = describer(bytes(payload), 0x0C040021)
+    # It should be exactly 0.0 or very close (1.17e-05)
+    assert "1.1718750000611067e-05 [m/s2]" in str(desc.get("External Acceleration Demand"))
+
+    # 2048 -> 1 m/s2 deceleration
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(2048, payload)
+    desc = describer(bytes(payload), 0x0C040021)
+    assert str(desc.get("External Acceleration Demand")).startswith("-0.99998828")
+
+    # 4095 -> approx 2 m/s2 deceleration
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(4095, payload)
+    desc = describer(bytes(payload), 0x0C040021)
+    assert str(desc.get("External Acceleration Demand")).startswith("-1.999")
+
+def test_j1939_control_brake_pretty_decode():
+    import pretty_j1939.describe
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Brake")
+    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    
+    # 0 -> 0%
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(0, payload)
+    desc = describer(bytes(payload), 0x18F00121)
+    assert desc.get("Brake Pedal Position") == "0.0 [%]"
+
+    # 2048 -> ~50%
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(2048, payload)
+    desc = describer(bytes(payload), 0x18F00121)
+    assert desc.get("Brake Pedal Position") == "50.0 [%]"
+
+    # 4095 -> 100%
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(4095, payload)
+    desc = describer(bytes(payload), 0x18F00121)
+    assert desc.get("Brake Pedal Position") == "100.0 [%]"
+
+
+
+def test_j1939_command_accel_pretty_decode():
+    import pretty_j1939.describe
+    import ctypes
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Command_Accel")
+    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(0, payload)
+    assert describer(bytes(payload), 0x0C00000B).get("Engine Requested Speed/Speed Limit") == "0.0 [rpm]"
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(2048, payload)
+    assert describer(bytes(payload), 0x0C00000B).get("Engine Requested Speed/Speed Limit") == "256.0 [rpm]"
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(4095, payload)
+    assert describer(bytes(payload), 0x0C00000B).get("Engine Requested Speed/Speed Limit") == "511.875 [rpm]"
+
+def test_j1939_control_accel_pretty_decode():
+    import pretty_j1939.describe
+    import ctypes
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Accel")
+    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(0, payload)
+    assert describer(bytes(payload), 0x18F00321).get("Accelerator Pedal Position 1") == "0.0 [%]"
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(2048, payload)
+    assert describer(bytes(payload), 0x18F00321).get("Accelerator Pedal Position 1") == "50.0 [%]"
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(4095, payload)
+    assert describer(bytes(payload), 0x18F00321).get("Accelerator Pedal Position 1") == "100.0 [%]"
+
+def test_j1939_status_rpm_pretty_decode():
+    import pretty_j1939.describe
+    import ctypes
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Status_RPM")
+    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(0, payload)
+    assert describer(bytes(payload), 0x18F00400).get("Engine Speed") == "0.0 [rpm]"
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(2048, payload)
+    assert describer(bytes(payload), 0x18F00400).get("Engine Speed") == "256.0 [rpm]"
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(4095, payload)
+    assert describer(bytes(payload), 0x18F00400).get("Engine Speed") == "511.875 [rpm]"
+
+
+def test_j1939_command_steering_pretty_decode():
+    import pretty_j1939.describe
+    import ctypes
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Command_Steering")
+    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    
+    # 0x08EF13A0 (Proprietary A, DA 19, SA 160)
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(4095, payload)
+    desc = describer(bytes(payload), 0x08EF13A0)
+    # Proprietary A won't have specific semantic decoding, just a byte dump
+    assert "Manufacturer Specific Information" in str(desc)
+
+def test_j1939_control_steering_pretty_decode():
+    import pretty_j1939.describe
+    import ctypes
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Steering")
+    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+
+    # 0x18F00913 (VDC2, SA 19)
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(0, payload)
+    assert str(describer(bytes(payload), 0x18F00913).get("Steering Wheel Angle")).startswith("-1.999")
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(2048, payload)
+    assert "2.3437" in str(describer(bytes(payload), 0x18F00913).get("Steering Wheel Angle"))
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(4095, payload)
+    assert str(describer(bytes(payload), 0x18F00913).get("Steering Wheel Angle")).startswith("1.999")
+
+
+def test_j1939_command_shift_pretty_decode():
+    import pretty_j1939.describe
+    import ctypes
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Command_Shift")
+    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+
+    # 0x0C010005 (TC1, DA 0, SA 5)
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(0, payload)
+    assert describer(bytes(payload), 0x0C010005).get("Transmission Requested Gear") == "0 [gear value]"
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(5, payload)
+    assert describer(bytes(payload), 0x0C010005).get("Transmission Requested Gear") == "5 [gear value]"
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(125, payload)
+    assert describer(bytes(payload), 0x0C010005).get("Transmission Requested Gear") == "125 [gear value]"
+
+def test_j1939_control_shift_joystick_pretty_decode():
+    import pretty_j1939.describe
+    import ctypes
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Shift_Joystick")
+    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+
+    # 0x18F00505 (ETC2, SA 5)
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(0, 0, payload)
+    desc = describer(bytes(payload), 0x18F00505)
+    assert desc.get("Transmission Current Gear") == "0 [gear value]"
+    assert "0x7dff" in str(desc.get("Transmission Requested Range")).lower()
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(64, 64, payload)
+    desc = describer(bytes(payload), 0x18F00505)
+    assert desc.get("Transmission Current Gear") == "64 [gear value]"
+    assert "0xbdff" in str(desc.get("Transmission Requested Range")).lower()
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(125, 125, payload)
+    desc = describer(bytes(payload), 0x18F00505)
+    assert desc.get("Transmission Current Gear") == "125 [gear value]"
+    assert "0xfaff" in str(desc.get("Transmission Requested Range")).lower()
+
+
+def test_j1939_command_horn_pretty_decode():
+    import pretty_j1939.describe
+    import ctypes
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Command_Horn")
+    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+
+    # 0x08EF0000 (Proprietary A) -- RAMN Uses DA=BODY_CTRL(33), SA=SHIFT_CONSOLE(5) => 0x08EF2105
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(255, payload)
+    desc = describer(bytes(payload), 0x08EF2105)
+    assert "Manufacturer Specific Information" in str(desc)
+
+def test_j1939_control_horn_pretty_decode():
+    import pretty_j1939.describe
+    import ctypes
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Horn")
+    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+
+    # 0x18FDD421 (CM3, PGN 64980, SA 33)
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(1, payload)
+    desc = describer(bytes(payload), 0x18FDD421)
+    assert desc.get("Horn Switch") == "1 (Unknown)"
+
+def test_j1939_command_turnindicator_pretty_decode():
+    import pretty_j1939.describe
+    import ctypes
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Command_TurnIndicator")
+    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+
+    # 0x0CFDCC05 (OEL, PGN 64972, SA 5)
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(0, payload)
+    assert describer(bytes(payload), 0x0CFDCC05).get("Turn Signal Switch") == "0 (Unknown)"
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(0x0100, payload) # Left
+    assert describer(bytes(payload), 0x0CFDCC05).get("Turn Signal Switch") == "1 (Unknown)"
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(0x0001, payload) # Right
+    assert describer(bytes(payload), 0x0CFDCC05).get("Turn Signal Switch") == "2 (Unknown)"
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(0x0101, payload) # Hazard
+    assert describer(bytes(payload), 0x0CFDCC05).get("Turn Signal Switch") == "3 (Unknown)"
+
+
+def test_j1939_command_sidebrake_pretty_decode():
+    import pretty_j1939.describe
+    import ctypes
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Command_Sidebrake")
+    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+
+    # 0x18FEF105 (CCVS1, PGN 65265, SA 5)
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(1, payload)
+    desc = describer(bytes(payload), 0x18FEF105)
+    assert desc.get("Parking Brake Switch") == "1 (Unknown)"
+
+def test_j1939_control_sidebrake_pretty_decode():
+    import pretty_j1939.describe
+    import ctypes
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Sidebrake")
+    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+
+    # 0x18FEFA0B (Brake System, PGN 65274, SA 11)
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(1, payload)
+    desc = describer(bytes(payload), 0x18FEFA0B)
+    assert desc.get("Parking Brake Actuator") == "1 (Unknown)"
+
+
+def test_j1939_control_lights_pretty_decode():
+    import pretty_j1939.describe
+    import ctypes
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Lights")
+    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+
+    # 0x18FDCC21 (OEL, PGN 64972, SA 33)
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(0, payload) # Off
+    desc = describer(bytes(payload), 0x18FDCC21)
+    assert desc.get("Main Light Switch") == "0 (Unknown)"
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(0x08, payload) # Taillamp
+    assert describer(bytes(payload), 0x18FDCC21).get("Main Light Switch") == "1 (Unknown)"
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(0x18, payload) # Taillamp + Lowbeam
+    assert describer(bytes(payload), 0x18FDCC21).get("Main Light Switch") == "2 (Unknown)"
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(0x38, payload) # Taillamp + Lowbeam + Highbeam
+    assert describer(bytes(payload), 0x18FDCC21).get("Main Light Switch") == "3 (Unknown)"
+
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(0x40, payload) # Left Turn
+    assert describer(bytes(payload), 0x18FDCC21).get("Turn Signal Switch") == "1 (Unknown)"
+
+def test_j1939_command_lights_roundtrip():
+    # Command_Lights now has specific J1939 bit mapping (POS1-4)
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Command_Lights")
+    decode_func = getattr(ramn_can_db_j1939, "RAMN_Decode_Command_Lights")
+    
+    # Valid POS values are 1, 2, 3, 4
+    for val in [1, 2, 3, 4]:
+        payload = (ctypes.c_uint8 * 8)(0,0,0,0,0,0,0,0)
+        encode_func(val, payload)
+        
+        # Isolation: bytes other than 0 should be 0xFF
+        for i in range(8):
+            if i != 0:
+                assert payload[i] == 0xFF
+        
+        decoded_val = decode_func(payload, 8)
+        assert decoded_val == val, f"Command_Lights J1939 roundtrip failed for {val}, got {decoded_val}"
+
+def test_j1939_command_lights_pretty_decode():
+    import pretty_j1939.describe
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Command_Lights")
+    describer = pretty_j1939.describe.get_describer()
+    
+    # POS1: Off
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(1, payload)
+    desc = describer(bytes(payload), 0x0CFE4105)
+    assert desc.get('Running Light Command') == '0 (Unknown)'
+    assert desc.get('Low Beam Head Light Command') == '0 (Unknown)'
+    assert desc.get('High Beam Head Light Command') == '0 (Unknown)'
+    
+    # POS2: Park
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(2, payload)
+    desc = describer(bytes(payload), 0x0CFE4105)
+    assert desc.get('Running Light Command') == '1 (Unknown)'
+    assert desc.get('Low Beam Head Light Command') == '0 (Unknown)'
+    assert desc.get('High Beam Head Light Command') == '0 (Unknown)'
+    
+    # POS3: Lowbeam
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(3, payload)
+    desc = describer(bytes(payload), 0x0CFE4105)
+    assert desc.get('Running Light Command') == '1 (Unknown)'
+    assert desc.get('Low Beam Head Light Command') == '1 (Unknown)'
+    assert desc.get('High Beam Head Light Command') == '0 (Unknown)'
+    
+    # POS4: Highbeam
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(4, payload)
+    desc = describer(bytes(payload), 0x0CFE4105)
+    assert desc.get('Running Light Command') == '1 (Unknown)'
+    assert desc.get('Low Beam Head Light Command') == '1 (Unknown)'
+    assert desc.get('High Beam Head Light Command') == '1 (Unknown)'
+
+def test_j1939_control_enginekey_roundtrip():
+    # RAMN values are 1 (OFF), 2 (ACC), 3 (IGN)
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_EngineKey")
+    decode_func = getattr(ramn_can_db_j1939, "RAMN_Decode_Control_EngineKey")
+    
+    for val in [1, 2, 3]:
+        payload = (ctypes.c_uint8 * 8)(0,0,0,0,0,0,0,0)
+        encode_func(val, payload)
+        
+        # Isolation: bytes other than 2 should be 0xFF
+        for i in range(8):
+            if i != 2:
+                assert payload[i] == 0xFF
+        
+        decoded_val = decode_func(payload, 8)
+        assert decoded_val == val, f"Control_EngineKey J1939 roundtrip failed for {val}, got {decoded_val}"
+
+def test_j1939_control_enginekey_pretty_decode():
+    import pretty_j1939.describe
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_EngineKey")
+    describer = pretty_j1939.describe.get_describer(da_json='.agent/j1939-json/J1939db.json')
+    
+    # 1: OFF
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(1, payload)
+    desc = describer(bytes(payload), 0x18FDC04D)
+    assert desc.get('Transit Run Status') == '0 (Unknown)', f"Got {desc.get('Transit Run Status')}"
+    
+    # 2: ACC
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(2, payload)
+    desc = describer(bytes(payload), 0x18FDC04D)
+    assert desc.get('Transit Run Status') == '1 (Unknown)', f"Got {desc.get('Transit Run Status')}"
+    
+    # 3: IGN
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(3, payload)
+    desc = describer(bytes(payload), 0x18FDC04D)
+    assert desc.get('Transit Run Status') == '2 (Unknown)', f"Got {desc.get('Transit Run Status')}"
 
 def test_shift_joystick_roundtrip():
     encode_func = getattr(ramn_can_db, "RAMN_Encode_Control_Shift_Joystick")
