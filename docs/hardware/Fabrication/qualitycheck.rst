@@ -87,7 +87,9 @@ If your board has been flashed with the ``ENABLE_J1939_MODE`` compile-time switc
 Operate the physical controls and verify the corresponding J1939 PGNs and payloads:
 
 * **Engine Key:**
-  Move the engine key. Observe the Control Status on **PGN 0xFDC0** (64960), Source Address 0x4D (77). **CAN ID to inspect: 0x18FDC04D**. Byte 1 (bits 0-1) should change to reflect the switch state (0=OFF, 1=ACC, 2=IGN). Unused bits should be set to their Not Available state.
+  Move the engine key. 
+  - **Ignition Switch:** Observe **PGN 0xFDC0** (64960), Source Address 0x4D (77). **CAN ID to inspect: 0x18FDC04D**. Byte 1 (bits 1-2, SPN 1637) should reflect the switch state (0=OFF, 1=ACC, 2=IGN).
+  - **Run Switch Status (Battery LED):** Observe **PGN 0xFDC0** (64960), Source Address 0x21 (33). **CAN ID to inspect: 0x18FDC021**. Byte 3 (bits 3-4, SPN 3046) should reflect the "Battery" LED state (0=Off, 1=On/Run).
 
 * **Steering (Chassis Potentiometer):**
   Turn the steering potentiometer left and right. Observe the Control Status on **ESC1 (PGN 0xF00B** / 61451), Source Address 0x13 (19). **CAN ID to inspect: 0x18F00B13**. Bytes 1-2 (SPN 2928) will sweep through the mapped angle range. *(Note: The Proprietary A Command message is an external request and will not change via the physical knob).*
@@ -102,17 +104,20 @@ Operate the physical controls and verify the corresponding J1939 PGNs and payloa
   Move the SHIFT joystick (Up/Down/Left/Right/Press). Observe the Control Status on **ETC2 (PGN 0xF005** / 61445), Source Address 0x03 (3). **CAN ID to inspect: 0x18F00503**. Verify that Byte 4 (SPN 523, Current Gear) and Byte 5 (SPN 162, Requested Range) update according to the joystick position. *(Note: The TC1 Command is an external autonomous request).*
 
 * **Handbrake (Sidebrake):**
-  Toggle the Handbrake up and down. Observe the Control Status on **EBS1 (PGN 0x0200** / 512), Source Address 0x0B (11). **CAN ID to inspect: 0x1802FF0B** (Broadcast DA=255). Byte 1 (bits 0-1, SPN 619) should reflect the active and inactive states. *(Note: The CCVS1 Command is an external autonomous request).*
+  Toggle the Handbrake up and down. 
+  - **Brake Switch Status:** Observe **EBS1 (PGN 0x0200** / 512), Source Address 0x0B (11). **CAN ID to inspect: 0x1802FF0B** (Broadcast DA=255). Byte 1 (bits 1-2, SPN 619) should reflect the active and inactive states.
+  - **Parking Brake Switch (Parking LED):** Observe **CCVS1 (PGN 0xFEF1** / 65265), Source Address 0x21 (33). **CAN ID to inspect: 0x18FEF121**. Byte 4 (bits 3-4, SPN 70) should reflect the "Parking" LED state (0=Passive, 1=Active).
 
 * **Headlights Switch:**
   Toggle the headlights switch through its four positions. 
-  - **Control Status:** Observe **OEL (PGN 0xFDCC** / 64972), Source Address 0x21 (33). **CAN ID to inspect: 0x18FDCC21**. Byte 1 (bits 4-7, SPN 2872) should reflect the switch status (0=Off, 1=Park, 2=Lowbeam, 3=Highbeam).
-  - **Simulator Command:** Observe **Lighting Cmd (PGN 0xFE41** / 65089), Source Address 0x05 (5). **CAN ID to inspect: 0x0CFE4105**. (Unlike the other controls, RAMN encodes this physical switch directly into a Simulator Command).
+  - **Control Status:** Observe **OEL (PGN 0xFDCC** / 64972), Source Address 0x21 (33). **CAN ID to inspect: 0x18FDCC21**. Byte 1 (bits 1-4, SPN 2872) should reflect the switch status (0=Off, 1=Park, 2=Lowbeam, 3=Highbeam).
+  - **Simulator Command:** Observe **Lighting Cmd (PGN 0xFE41** / 65089), Source Address 0x05 (5). **CAN ID to inspect: 0x0CFE4105**.
+  - **Engine Malfunction Indicator (Engine LED):** Observe **DM1 (PGN 0xFE4A** / 65226), Source Address 0x21 (33). **CAN ID to inspect: 0x18FE4A21**. Byte 1 (bits 7-8, SPN 1213) should reflect the "Engine" LED state (0=Disabled, 1=Enabled).
 
 * **Turn Indicators:**
   Press the SHIFT joystick left and right.
-  - **Indicator Request:** Observe **OEL (PGN 0xFDCC** / 64972), Source Address 0x05 (5). **CAN ID to inspect: 0x0CFDCC05**. Byte 2 (bits 8-11, SPN 2876) should reflect the request (1=Left, 2=Right, 3=Hazard).
-  - **Blinking Status:** Observe **OEL (PGN 0xFDCC** / 64972), Source Address 0x21 (33). **CAN ID to inspect: 0x18FDCC21**. Byte 2 (bits 8-11, SPN 2876) will toggle between the active side and 0 (Not Active) at the blinking frequency.
+  - **Indicator Request:** Observe **OEL (PGN 0xFDCC** / 64972), Source Address 0x05 (5). **CAN ID to inspect: 0x0CFDCC05**. Byte 2 (bits 1-4, SPN 2876) should reflect the request (1=Left, 2=Right, 3=Hazard).
+  - **Blinking Status:** Observe **OEL (PGN 0xFDCC** / 64972), Source Address 0x21 (33). **CAN ID to inspect: 0x18FDCC21**. Byte 2 (bits 1-4, SPN 2876) will toggle between the active side and 0 (Not Active) at the blinking frequency.
 
 All unused bytes in the 8-byte J1939 payloads should remain set to ``0xFF`` (Not Available).
   
