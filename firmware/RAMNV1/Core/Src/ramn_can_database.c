@@ -26,7 +26,7 @@ uint16_t RAMN_Decode_Command_Brake(const uint8_t* payload, uint32_t dlc) {
 void RAMN_Encode_Command_Brake(uint16_t value, uint8_t* payload) {
     /* Initialize payload to J1939 "Not Available" */
     memset(payload, 0xFF, 8);
-    /* SPN 2920 (XBR External Decel Demand). Bytes 1-2. Offset: -15.687 m/s2. Res: 1/4096 m/s2 per bit. */
+    /* SPN 2920 (XBR External Deceleration Demand). Bytes 1-2. PGN 1024 (XBR). */
     /* 0 m/s2 maps to raw 64254. We assume ramn_val is in 1/2048 m/s2 units starting from 0 m/s2, and represents deceleration. */
     /* Since 1 unit = 1/2048 m/s2 of deceleration = -2 * 1/4096 m/s2 */
     /* So j1939_val = 64254 - (value * 2) */
@@ -42,6 +42,7 @@ void RAMN_Encode_Command_Brake(uint16_t value, uint8_t* payload) {
 
 uint16_t RAMN_Decode_Command_Brake(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 2U) return 0;
+    /* SPN 2920 (XBR External Deceleration Demand). Bytes 1-2. PGN 1024 (XBR). */
     uint16_t j1939_val = (uint16_t)payload[0] | ((uint16_t)payload[1] << 8);
     if (j1939_val > 64254) return 0;
     return (64254 - j1939_val) / 2;
@@ -64,7 +65,7 @@ uint16_t RAMN_Decode_Control_Brake(const uint8_t* payload, uint32_t dlc) {
 #else
 void RAMN_Encode_Control_Brake(uint16_t value, uint8_t* payload) {
     memset(payload, 0xFF, 8);
-    /* SPN 521 (Brake Pedal Position). Byte 2. Scale: 0.4%/bit. */
+    /* SPN 521 (Brake Pedal Position). Byte 2. PGN 61441 (EBC1). */
     /* ramn_val 4095 maps to 100% (raw 250). j1939_val = (ramn_val * 250) / 4095. */
     uint8_t j1939_val = (uint8_t)((value * 250U) / 4095U);
     payload[1] = j1939_val;
@@ -72,6 +73,7 @@ void RAMN_Encode_Control_Brake(uint16_t value, uint8_t* payload) {
 
 uint16_t RAMN_Decode_Control_Brake(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 2U) return 0;
+    /* SPN 521 (Brake Pedal Position). Byte 2. PGN 61441 (EBC1). */
     uint8_t j1939_val = payload[1];
     if (j1939_val > 250) return 4095;
     return (uint16_t)((j1939_val * 4095U) / 250U);
@@ -94,9 +96,8 @@ uint16_t RAMN_Decode_Command_Accel(const uint8_t* payload, uint32_t dlc) {
 #else
 void RAMN_Encode_Command_Accel(uint16_t value, uint8_t* payload) {
     memset(payload, 0xFF, 8);
-    /* SPN 898 (Engine Requested Speed). Bytes 2-3. Scale: 0.125 rpm/bit. */
-    /* Assume ramn_val maps to RPM (e.g., 0-8000). j1939_val = rpm / 0.125 = rpm * 8. */
-    /* We assume ramn_val is already in 0.125 rpm units for consistency with Status_RPM. */
+    /* SPN 898 (Engine Requested Speed/Speed Limit). Bytes 2-3. PGN 0 (TSC1). */
+    /* Assume ramn_val is already in 0.125 rpm units for consistency with Status_RPM. */
     uint16_t j1939_val = value;
     payload[1] = (uint8_t)(j1939_val & 0xFF);
     payload[2] = (uint8_t)((j1939_val >> 8) & 0xFF);
@@ -104,6 +105,7 @@ void RAMN_Encode_Command_Accel(uint16_t value, uint8_t* payload) {
 
 uint16_t RAMN_Decode_Command_Accel(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 3U) return 0;
+    /* SPN 898 (Engine Requested Speed/Speed Limit). Bytes 2-3. PGN 0 (TSC1). */
     return (uint16_t)payload[1] | ((uint16_t)payload[2] << 8);
 }
 #endif
@@ -124,13 +126,15 @@ uint16_t RAMN_Decode_Control_Accel(const uint8_t* payload, uint32_t dlc) {
 #else
 void RAMN_Encode_Control_Accel(uint16_t value, uint8_t* payload) {
     memset(payload, 0xFF, 8);
-    /* SPN 91 (Accelerator Pedal Position 1). Byte 2. Scale: 0.4%/bit. */
+    /* SPN 91 (Accelerator Pedal Position 1). Byte 2. PGN 61443 (EEC2). */
+    /* ramn_val 4095 maps to 100% (raw 250). j1939_val = (ramn_val * 250) / 4095. */
     uint8_t j1939_val = (uint8_t)((value * 250U) / 4095U);
     payload[1] = j1939_val;
 }
 
 uint16_t RAMN_Decode_Control_Accel(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 2U) return 0;
+    /* SPN 91 (Accelerator Pedal Position 1). Byte 2. PGN 61443 (EEC2). */
     uint8_t j1939_val = payload[1];
     if (j1939_val > 250) return 4095;
     return (uint16_t)((j1939_val * 4095U) / 250U);
@@ -153,7 +157,7 @@ uint16_t RAMN_Decode_Status_RPM(const uint8_t* payload, uint32_t dlc) {
 #else
 void RAMN_Encode_Status_RPM(uint16_t value, uint8_t* payload) {
     memset(payload, 0xFF, 8);
-    /* SPN 190 (Engine Speed). Bytes 4-5. Scale: 0.125 rpm/bit. */
+    /* SPN 190 (Engine Speed). Bytes 4-5. PGN 61444 (EEC1). Scale: 0.125 rpm/bit. */
     uint16_t j1939_val = value;
     payload[3] = (uint8_t)(j1939_val & 0xFF);
     payload[4] = (uint8_t)((j1939_val >> 8) & 0xFF);
@@ -161,6 +165,7 @@ void RAMN_Encode_Status_RPM(uint16_t value, uint8_t* payload) {
 
 uint16_t RAMN_Decode_Status_RPM(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 5U) return 0;
+    /* SPN 190 (Engine Speed). Bytes 4-5. PGN 61444 (EEC1). */
     return (uint16_t)payload[3] | ((uint16_t)payload[4] << 8);
 }
 #endif
@@ -207,7 +212,7 @@ uint16_t RAMN_Decode_Control_Steering(const uint8_t* payload, uint32_t dlc) {
 }
 #else
 void RAMN_Encode_Control_Steering(uint16_t value, uint8_t* payload) {
-    /* SPN 1807 (Steering Wheel Angle). Bytes 1-2. PGN 61449 (VDC2). */
+    /* SPN 2928 (Steering Wheel Angle). Bytes 1-2. PGN 61451 (ESC1). */
     /* 0 rad maps to raw 32127. Ramn_val 0-4095 centers at 2048. */
     memset(payload, 0xFF, 8);
     uint16_t j1939_val = (value > 35456) ? 65535 : (value + 30079); /* 2048 -> 32127 (0 rad) */
@@ -217,6 +222,7 @@ void RAMN_Encode_Control_Steering(uint16_t value, uint8_t* payload) {
 
 uint16_t RAMN_Decode_Control_Steering(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 2U) return 0;
+    /* SPN 2928 (Steering Wheel Angle). Bytes 1-2. PGN 61451 (ESC1). */
     uint16_t j1939_val = (uint16_t)payload[0] | ((uint16_t)payload[1] << 8);
     if (j1939_val < 30079) return 0;
     return j1939_val - 30079;
@@ -243,6 +249,7 @@ void RAMN_Encode_Command_Shift(uint8_t value, uint8_t* payload) {
 
 uint8_t RAMN_Decode_Command_Shift(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 3U) return 0;
+    /* SPN 525 (Transmission Requested Gear). Byte 3. PGN 256 (TC1). */
     return (uint8_t)(payload[2] - 125);
 }
 #endif
@@ -278,7 +285,7 @@ uint8_t RAMN_Decode_Joystick(const uint8_t* payload, uint32_t dlc) {
 }
 #else
 void RAMN_Encode_Control_Shift_Joystick(uint8_t shift_value, uint8_t joystick_value, uint8_t* payload) {
-    /* SPN 523 and SPN 162. Bytes 4 and 5. PGN 61445 (ETC2). */
+    /* SPN 523 (Current Gear) and SPN 162 (Requested Range). Bytes 4 and 5. PGN 61445 (ETC2). */
     memset(payload, 0xFF, 8);
     payload[3] = (uint8_t)(shift_value + 125);
     payload[4] = (uint8_t)(joystick_value + 125);
@@ -286,11 +293,13 @@ void RAMN_Encode_Control_Shift_Joystick(uint8_t shift_value, uint8_t joystick_va
 
 uint8_t RAMN_Decode_Control_Shift(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 4U) return 0;
+    /* SPN 523 (Current Gear). Byte 4. PGN 61445 (ETC2). */
     return (uint8_t)(payload[3] - 125);
 }
 
 uint8_t RAMN_Decode_Joystick(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 5U) return 0;
+    /* SPN 162 (Requested Range). Byte 5. PGN 61445 (ETC2). */
     return (uint8_t)(payload[4] - 125);
 }
 #endif
@@ -308,13 +317,14 @@ uint8_t RAMN_Decode_Command_Horn(const uint8_t* payload, uint32_t dlc) {
 }
 #else
 void RAMN_Encode_Command_Horn(uint8_t value, uint8_t* payload) {
-    /* PGN 61184 (Proprietary A). Byte 1. */
+    /* Proprietary A (PGN 61184). Byte 1. */
     memset(payload, 0xFF, 8);
     payload[0] = (uint8_t)(value & 0xFF);
 }
 
 uint8_t RAMN_Decode_Command_Horn(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 1U) return 0;
+    /* Proprietary A (PGN 61184). Byte 1. */
     return payload[0];
 }
 #endif
@@ -332,7 +342,7 @@ uint8_t RAMN_Decode_Control_Horn(const uint8_t* payload, uint32_t dlc) {
 }
 #else
 void RAMN_Encode_Control_Horn(uint8_t value, uint8_t* payload) {
-    /* SPN 2641 (Horn Switch). Byte 4, Bits 3-4 (bit index 26). PGN 64980 (CM3). */
+    /* SPN 2641 (Horn Switch). Byte 4 (bits 5-6). PGN 64980 (CM3). */
     memset(payload, 0xFF, 8);
     payload[3] &= ~(0x03 << 4);
     payload[3] |= (value & 0x03) << 4;
@@ -340,6 +350,7 @@ void RAMN_Encode_Control_Horn(uint8_t value, uint8_t* payload) {
 
 uint8_t RAMN_Decode_Control_Horn(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 4U) return 0;
+    /* SPN 2641 (Horn Switch). Byte 4 (bits 5-6). PGN 64980 (CM3). */
     return (payload[3] >> 4) & 0x03;
 }
 #endif
@@ -359,23 +370,24 @@ uint16_t RAMN_Decode_Command_TurnIndicator(const uint8_t* payload, uint32_t dlc)
 }
 #else
 void RAMN_Encode_Command_TurnIndicator(uint16_t value, uint8_t* payload) {
-    /* SPN 2876 (Turn Signal Switch). Byte 2 (bits 8-11). PGN 64972 (OEL). */
-    uint8_t spn_val = 0;
-    if ((value & 0xFF00) && (value & 0x00FF)) spn_val = 3; // Hazard
-    else if (value & 0xFF00) spn_val = 1; // Left
-    else if (value & 0x00FF) spn_val = 2; // Right
+    /* SPN 2876 (Turn Signal Indicator). Byte 2 (bits 1-4). PGN 64972 (OEL). */
+    uint8_t turn_val = 0;
+    if ((value & 0xFF00) && (value & 0x00FF)) turn_val = 3; // Hazard
+    else if (value & 0xFF00) turn_val = 1; // Left
+    else if (value & 0x00FF) turn_val = 2; // Right
 
     memset(payload, 0xFF, 8);
-    payload[1] = (payload[1] & 0x0F) | (spn_val << 4);
+    payload[1] = (payload[1] & 0xF0) | (turn_val);
 }
 
 uint16_t RAMN_Decode_Command_TurnIndicator(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 2U) return 0;
-    uint8_t spn_val = (payload[1] >> 4) & 0x0F;
+    /* SPN 2876 (Turn Signal Indicator). Byte 2 (bits 1-4). PGN 64972 (OEL). */
+    uint8_t turn_val = payload[1] & 0x0F;
     uint16_t value = 0;
-    if (spn_val == 1) value = 0x0100;
-    else if (spn_val == 2) value = 0x0001;
-    else if (spn_val == 3) value = 0x0101;
+    if (turn_val == 1) value = 0x0100;
+    else if (turn_val == 2) value = 0x0001;
+    else if (turn_val == 3) value = 0x0101;
     return value;
 }
 #endif
@@ -395,14 +407,15 @@ uint16_t RAMN_Decode_Command_Sidebrake(const uint8_t* payload, uint32_t dlc) {
 }
 #else
 void RAMN_Encode_Command_Sidebrake(uint16_t value, uint8_t* payload) {
-    /* SPN 70 (Parking Brake Switch). Byte 1 (bits 2-3). PGN 65265 (CCVS1). */
+    /* SPN 70 (Parking Brake Switch). Byte 1 (bits 3-4). PGN 65265 (CCVS1). */
     memset(payload, 0xFF, 8);
-    payload[0] = (payload[0] & 0xCF) | (uint8_t)((value & 0x03) << 4);
+    payload[0] = (payload[0] & 0xF3) | (uint8_t)((value & 0x03) << 2);
 }
 
 uint16_t RAMN_Decode_Command_Sidebrake(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 1U) return 0;
-    return (uint16_t)((payload[0] >> 4) & 0x03);
+    /* SPN 70 (Parking Brake Switch). Byte 1 (bits 3-4). PGN 65265 (CCVS1). */
+    return (uint16_t)((payload[0] >> 2) & 0x03);
 }
 #endif
 
@@ -419,14 +432,16 @@ uint8_t RAMN_Decode_Control_Sidebrake(const uint8_t* payload, uint32_t dlc) {
 }
 #else
 void RAMN_Encode_Control_Sidebrake(uint8_t value, uint8_t* payload) {
-    /* SPN 619 (Parking Brake Actuator). Byte 4 (bits 6-7). PGN 65274. */
+    /* SPN 619 (Parking Brake Actuator). Byte 4 (bits 7-8). PGN 65274. */
     memset(payload, 0xFF, 8);
-    payload[3] = (payload[3] & 0x3F) | ((value & 0x03) << 6);
+    payload[3] &= ~(0x03 << 6);
+    payload[3] |= (value & 0x03) << 6;
 }
 
 uint8_t RAMN_Decode_Control_Sidebrake(const uint8_t* payload, uint32_t dlc) {
-    if (dlc < 1U) return 0;
-    if (dlc < 4U) return 0; return (payload[3] >> 6) & 0x03;
+    if (dlc < 4U) return 0;
+    /* SPN 619 (Parking Brake Actuator). Byte 4 (bits 7-8). PGN 65274. */
+    return (payload[3] >> 6) & 0x03;
 }
 #endif
 
@@ -443,19 +458,20 @@ uint8_t RAMN_Decode_Control_EngineKey(const uint8_t* payload, uint32_t dlc) {
 }
 #else
 void RAMN_Encode_Control_EngineKey(uint8_t value, uint8_t* payload) {
-    /* SPN 3046 (Transit Run Status). Byte 3 (bits 3-4, 1-indexed) -> payload[2] bits 2-3. PGN 64960. */
+    /* SPN 1637 (Ignition Switch). Byte 1 (bits 1-2). PGN 64960. */
     memset(payload, 0xFF, 8);
     uint8_t spn_val = 3; // Not Available
     if (value == RAMN_ENGINEKEY_LEFT) spn_val = 0; // Off
     else if (value == RAMN_ENGINEKEY_MIDDLE) spn_val = 1; // ACC
     else if (value == RAMN_ENGINEKEY_RIGHT) spn_val = 2; // IGN
 
-    payload[2] = (payload[2] & 0xF3) | (uint8_t)(spn_val << 2);
+    payload[0] = (payload[0] & 0xFC) | (uint8_t)(spn_val);
 }
 
 uint8_t RAMN_Decode_Control_EngineKey(const uint8_t* payload, uint32_t dlc) {
-    if (dlc < 3U) return 0;
-    uint8_t spn_val = (payload[2] >> 2) & 0x03;
+    if (dlc < 1U) return 0;
+    /* SPN 1637 (Ignition Switch). Byte 1 (bits 1-2). PGN 64960. */
+    uint8_t spn_val = payload[0] & 0x03;
     if (spn_val == 0) return RAMN_ENGINEKEY_LEFT;
     if (spn_val == 1) return RAMN_ENGINEKEY_MIDDLE;
     if (spn_val == 2) return RAMN_ENGINEKEY_RIGHT;
@@ -479,8 +495,8 @@ uint16_t RAMN_Decode_Command_Lights(const uint8_t* payload, uint32_t dlc) {
 #else
 void RAMN_Encode_Command_Lights(uint16_t value, uint8_t* payload) {
     /* PGN 65089 (Lighting Command). Byte 1. */
-    /* J1939 SPN 2403 (Running), 2351 (Alt), 2349 (Low), 2347 (High) */
-    /* Bits: 7-6 (Running), 5-4 (Alt), 3-2 (Low), 1-0 (High) */
+    /* J1939 SPN 2403 (Daytime Running Lamps), 2351 (Alternate Beam), 2349 (Low Beam), 2347 (High Beam) */
+    /* Bits: 7-8 (Daytime Running), 5-6 (Alternate Beam), 3-4 (Low Beam), 1-2 (High Beam) */
     memset(payload, 0xFF, 8);
     uint8_t byte1 = 0xFF; // Start with "Don't Care" (11b) for all 2-bit fields
 
@@ -490,26 +506,27 @@ void RAMN_Encode_Command_Lights(uint16_t value, uint8_t* payload) {
         byte1 = (byte1 & 0xF3) | 0x00; // Low = 0
         byte1 = (byte1 & 0xFC) | 0x00; // High = 0
     } else if (value == RAMN_LIGHTSWITCH_POS2) { // Park
-        byte1 = (byte1 & 0x3F) | 0x01 << 6; // Running = 1 (Activate)
+        byte1 = (byte1 & 0x3F) | 0x40; // Running = 1 (Activate) (01b << 6)
         byte1 = (byte1 & 0xCF) | 0x00; // Alt = 0
         byte1 = (byte1 & 0xF3) | 0x00; // Low = 0
         byte1 = (byte1 & 0xFC) | 0x00; // High = 0
     } else if (value == RAMN_LIGHTSWITCH_POS3) { // Lowbeam
-        byte1 = (byte1 & 0x3F) | 0x01 << 6; // Running = 1
+        byte1 = (byte1 & 0x3F) | 0x40; // Running = 1
         byte1 = (byte1 & 0xCF) | 0x00; // Alt = 0
-        byte1 = (byte1 & 0xF3) | 0x01 << 2; // Low = 1
+        byte1 = (byte1 & 0xF3) | 0x04; // Low = 1 (01b << 2)
         byte1 = (byte1 & 0xFC) | 0x00; // High = 0
     } else if (value == RAMN_LIGHTSWITCH_POS4) { // Highbeam
-        byte1 = (byte1 & 0x3F) | 0x01 << 6; // Running = 1
+        byte1 = (byte1 & 0x3F) | 0x40; // Running = 1
         byte1 = (byte1 & 0xCF) | 0x00; // Alt = 0
-        byte1 = (byte1 & 0xF3) | 0x01 << 2; // Low = 1
-        byte1 = (byte1 & 0xFC) | 0x01; // High = 1
+        byte1 = (byte1 & 0xF3) | 0x04; // Low = 1
+        byte1 = (byte1 & 0xFC) | 0x01; // High = 1 (01b << 0)
     }
     payload[0] = byte1;
 }
 
 uint16_t RAMN_Decode_Command_Lights(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 1U) return 0;
+    /* PGN 65089 (Lighting Command). Byte 1. */
     uint8_t byte1 = payload[0];
     uint8_t high    = byte1 & 0x03;
     uint8_t low     = (byte1 >> 2) & 0x03;
@@ -535,7 +552,7 @@ uint8_t RAMN_Decode_Control_Lights(const uint8_t* payload, uint32_t dlc) {
 }
 #else
 void RAMN_Encode_Control_Lights(uint8_t value, uint8_t* payload) {
-    /* SPN 2872 (Main Light Switch). Byte 1 (bits 4-7). PGN 64972 (OEL). */
+    /* SPN 2872 (Main Light Switch). Byte 1 (bits 1-4). PGN 64972 (OEL). */
     /* LED_TAILLAMP = 0x08, LED_LOWBEAM = 0x10, LED_HIGHBEAM = 0x20 */
     uint8_t spn_2872 = 0;
     if (value & 0x20) spn_2872 = 3; // Highbeam
@@ -545,7 +562,7 @@ void RAMN_Encode_Control_Lights(uint8_t value, uint8_t* payload) {
     memset(payload, 0xFF, 8);
     payload[0] = (payload[0] & 0xF0) | (uint8_t)(spn_2872);
 
-    /* SPN 2876 (Turn Signal Indicator). Byte 2 (bits 8-11). PGN 64972 (OEL). */
+    /* SPN 2876 (Turn Signal Indicator). Byte 2 (bits 5-8). PGN 64972 (OEL). */
     /* LED_LEFTTURN = 0x40, LED_RIGHTTURN = 0x80 */
     uint8_t turn_status = 0;
     if ((value & 0x40) && (value & 0x80)) turn_status = 3; // Hazard
@@ -557,6 +574,7 @@ void RAMN_Encode_Control_Lights(uint8_t value, uint8_t* payload) {
 
 uint8_t RAMN_Decode_Control_Lights(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 2U) return 0;
+    /* SPN 2872 (Main Light Switch). Byte 1 (bits 1-4). PGN 64972 (OEL). */
     uint8_t spn_2872 = payload[0] & 0x0F;
     uint8_t lights = 0;
     
@@ -564,6 +582,7 @@ uint8_t RAMN_Decode_Control_Lights(const uint8_t* payload, uint32_t dlc) {
     if (spn_2872 >= 2) lights |= 0x10; // Lowbeam
     if (spn_2872 >= 3) lights |= 0x20; // Highbeam
     
+    /* SPN 2876 (Turn Signal Indicator). Byte 2 (bits 5-8). PGN 64972 (OEL). */
     uint8_t turn_spn = (payload[1] >> 4) & 0x0F;
     if (turn_spn == 1) lights |= 0x40; // Left
     else if (turn_spn == 2) lights |= 0x80; // Right
@@ -573,12 +592,14 @@ uint8_t RAMN_Decode_Control_Lights(const uint8_t* payload, uint32_t dlc) {
 }
 
 void RAMN_Encode_DM1(uint8_t value, uint8_t* payload) {
+    /* PGN 65226 (DM1). Byte 1: MIL (bits 7-8), Red Stop (bits 5-6), AWL (bits 3-4), Protect (bits 1-2). */
+    /* SPN 1213 (Malfunction Indicator Lamp Status). */
     memset(payload, 0xFF, 8);
     uint8_t mil = (value & 0x02) ? 1 : 0; // LED_CHECKENGINE
-    // Byte 0: MIL (7-6), Red Stop (5-4)=3, AWL (3-2)=3, Protect (1-0)=3
+    // MIL (7-8), Red Stop (5-6)=3, AWL (3-4)=3, Protect (1-2)=3
     payload[0] = (mil << 6) | 0x3F;
     payload[1] = 0xFF; // Flash states Not Available
-    // No Active Faults
+    // No Active Faults (J1939-73)
     payload[2] = 0x00;
     payload[3] = 0x00;
     payload[4] = 0x00;
@@ -586,16 +607,16 @@ void RAMN_Encode_DM1(uint8_t value, uint8_t* payload) {
 }
 
 void RAMN_Encode_CCVS1(uint8_t value, uint8_t* payload) {
+    /* PGN 65265 (CCVS1). Byte 4 (bits 3-4): SPN 70 (Parking Brake Switch). */
     memset(payload, 0xFF, 8);
     uint8_t pb_state = (value & 0x04) ? 1 : 0; // LED_SIDEBRAKE
-    // SPN 70 in Byte 4 (0-indexed 3), bits 4-3 (1-indexed), so shift by 2
     payload[3] = (payload[3] & 0xF3) | (uint8_t)(pb_state << 2);
 }
 
 void RAMN_Encode_EngineRun(uint8_t value, uint8_t* payload) {
+    /* PGN 64960. Byte 3 (bits 3-4): SPN 3046 (Run Switch Status). */
     memset(payload, 0xFF, 8);
     uint8_t spn_val = (value & 0x01) ? 1 : 0; // LED_BATTERY
-    // SPN 3046 (Transit Run Status). Byte 3 (bits 3-4, 1-indexed) -> payload[2] bits 2-3. PGN 64960.
     payload[2] = (payload[2] & 0xF3) | (uint8_t)(spn_val << 2);
 }
 #endif

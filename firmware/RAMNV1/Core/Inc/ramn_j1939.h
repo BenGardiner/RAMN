@@ -17,6 +17,7 @@
 #define J1939_PGN_LIGHTS_CMD        65089   /* Lighting Command */
 #define J1939_PGN_HORN_STATUS       65098   /* Secondary Air / Horn Status */
 #define J1939_PGN_CCVS1             65265   /* Cruise Control/Vehicle Speed 1 */
+#define J1939_PGN_DM1               65226   /* DM1 - Active Diagnostic Trouble Codes */
 
 /* J1939 Logical Source Addresses (SA) */
 #define J1939_SA_ENGINE             0
@@ -37,7 +38,7 @@
 #define J1939_DA_BROADCAST          255
 
 /* Proprietary A Payload Definitions */
-/* Command_Steering (PGN 61184): SA AEBS [160], DA Steering Controller [19]. Bytes 1-2 (bits 0-15). j1939_val = ramn_val */
-/* Command_Horn (PGN 61184): SA Shift Console [5], DA Body Controller [33]. Byte 1 (bits 0-7). j1939_val = ramn_val & 0xFF */
+/* Command_Steering (PGN 61184): SA AEBS (160), DA Steering Controller (19). Bytes 1-2. j1939_val = ramn_val */
+/* Command_Horn (PGN 61184): SA Shift Console (5), DA Body Controller (33). Byte 1. j1939_val = ramn_val & 0xFF */
 
 #endif /* INC_RAMN_J1939_H_ */
