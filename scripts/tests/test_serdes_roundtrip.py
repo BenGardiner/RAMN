@@ -1,6 +1,94 @@
 import ctypes
 import os
 import pytest
+
+import json
+import os
+import atexit
+import pretty_j1939.describe
+
+
+TRANSMITTERS = {
+    "Command_Brake": "ECUA",
+    "Command_Accel": "ECUA",
+    "Status_Rpm": "ECUA",
+    "Command_Steering": "ECUA",
+    "Command_Shift": "ECUA",
+    "Control_Horn": "ECUA",
+    "Command_Sidebrake": "ECUA",
+    "Control_Steering": "ECUB",
+    "Control_Sidebrake": "ECUB",
+    "Command_Lights": "ECUB",
+    "Control_Brake": "ECUC",
+    "Control_Accel": "ECUC",
+    "Control_Shift_Joystick": "ECUC",
+    "Joystick_Buttons": "ECUC",
+    "Command_Horn": "ECUC",
+    "Command_Turnindicator": "ECUC",
+    "Control_Enginekey": "ECUD",
+    "Control_Lights": "ECUD"
+}
+
+RECEIVERS = {
+    "Control_Brake": ["ECUA", "ECUD"],
+    "Control_Accel": ["ECUA"],
+    "Control_Steering": ["ECUA"],
+    "Control_Shift_Joystick": ["ECUA"],
+    "Joystick_Buttons": ["ECUA"],
+    "Control_Sidebrake": ["ECUA", "ECUD"],
+    "Control_Enginekey": ["ECUA", "ECUC"],
+    "Command_Horn": ["ECUA"],
+    "Command_Lights": ["ECUA", "ECUB", "ECUD"],
+    "Control_Lights": ["ECUA"],
+    "Status_Rpm": ["ECUB", "ECUC", "ECUD"],
+    "Command_Steering": ["ECUB"],
+    "Command_Sidebrake": ["ECUB", "ECUC"],
+    "Command_Brake": ["ECUC"],
+    "Command_Accel": ["ECUC"],
+    "Command_Shift": ["ECUC"],
+    "Command_Turnindicator": ["ECUD"],
+    "Control_Horn": []
+}
+
+MAPPING_REPORT = []
+
+def save_report():
+    report_path = os.path.join(os.path.dirname(__file__), "j1939_mapping_report.json")
+    with open(report_path, "w") as f:
+        json.dump(MAPPING_REPORT, f, indent=4)
+
+atexit.register(save_report)
+
+class RecordingDescriber:
+    def __init__(self, signal_name, *args, **kwargs):
+        self.signal_name = signal_name
+        self._describer = pretty_j1939.describe.get_describer(*args, **kwargs)
+
+    def __call__(self, data, can_id):
+        desc = self._describer(data, can_id)
+        if not any(r.get('RAMN_Signal') == self.signal_name for r in MAPPING_REPORT):
+            import subprocess
+            import sys
+            hex_id = f"{can_id:08X}"
+            hex_data = bytes(data).hex().upper()
+            cmd = f"echo {hex_id}#{hex_data} | {sys.executable} -m pretty_j1939 --bytes --no-summary --da-json .agent/j1939-json/J1939db.json -"
+            try:
+                res = subprocess.check_output(cmd, shell=True, text=True)
+                for line in reversed(res.strip().split('\n')):
+                    if line.strip():
+                        parsed = json.loads(line.strip())
+                        parsed["RAMN_Signal"] = self.signal_name
+                        parsed["Tx_ECU"] = TRANSMITTERS.get(self.signal_name, "Unknown")
+                        parsed["Rx_ECU"] = RECEIVERS.get(self.signal_name, [])
+                        MAPPING_REPORT.append(parsed)
+                        break
+            except Exception as e:
+                MAPPING_REPORT.append({
+                    "RAMN_Signal": self.signal_name,
+                    "error": str(e)
+                })
+        return desc
+
 import subprocess
 import sys
 
@@ -168,12 +256,13 @@ def test_j1939_signal_roundtrip(signal_name, range_limit, tolerance, used_bytes)
 def test_j1939_command_brake_pretty_decode():
     import pretty_j1939.describe
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Command_Brake")
-    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    describer = RecordingDescriber("Command_Brake", da_json=".agent/j1939-json/J1939db.json")
     
     # 0 -> 0 m/s2
     payload = (ctypes.c_uint8 * 8)()
     encode_func(0, payload)
     desc = describer(bytes(payload), 0x0C040021)
+
     # It should be exactly 0.0 or very close (1.17e-05)
     assert "1.1718750000611067e-05 [m/s2]" in str(desc.get("External Acceleration Demand"))
 
@@ -192,12 +281,13 @@ def test_j1939_command_brake_pretty_decode():
 def test_j1939_control_brake_pretty_decode():
     import pretty_j1939.describe
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Brake")
-    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    describer = RecordingDescriber("Control_Brake", da_json=".agent/j1939-json/J1939db.json")
     
     # 0 -> 0%
     payload = (ctypes.c_uint8 * 8)()
     encode_func(0, payload)
     desc = describer(bytes(payload), 0x18F00121)
+
     assert desc.get("Brake Pedal Position") == "0.0 [%]"
 
     # 2048 -> ~50%
@@ -218,7 +308,7 @@ def test_j1939_command_accel_pretty_decode():
     import pretty_j1939.describe
     import ctypes
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Command_Accel")
-    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    describer = RecordingDescriber("Command_Accel", da_json=".agent/j1939-json/J1939db.json")
     
     payload = (ctypes.c_uint8 * 8)()
     encode_func(0, payload)
@@ -236,7 +326,7 @@ def test_j1939_control_accel_pretty_decode():
     import pretty_j1939.describe
     import ctypes
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Accel")
-    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    describer = RecordingDescriber("Control_Accel", da_json=".agent/j1939-json/J1939db.json")
 
     payload = (ctypes.c_uint8 * 8)()
     encode_func(0, payload)
@@ -254,7 +344,7 @@ def test_j1939_status_rpm_pretty_decode():
     import pretty_j1939.describe
     import ctypes
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Status_RPM")
-    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    describer = RecordingDescriber("Status_Rpm", da_json=".agent/j1939-json/J1939db.json")
 
     payload = (ctypes.c_uint8 * 8)()
     encode_func(0, payload)
@@ -273,20 +363,21 @@ def test_j1939_command_steering_pretty_decode():
     import pretty_j1939.describe
     import ctypes
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Command_Steering")
-    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    describer = RecordingDescriber("Command_Steering", da_json=".agent/j1939-json/J1939db.json")
     
     # 0x08EF13A0 (Proprietary A, DA 19, SA 160)
     payload = (ctypes.c_uint8 * 8)()
     encode_func(4095, payload)
     desc = describer(bytes(payload), 0x08EF13A0)
+
     # Proprietary A won't have specific semantic decoding, just a byte dump
-    assert "Bytes" in str(desc)
+    assert "Manufacturer Specific Information (PropA_PDU1)" in str(desc)
 
 def test_j1939_control_steering_pretty_decode():
     import pretty_j1939.describe
     import ctypes
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Steering")
-    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    describer = RecordingDescriber("Control_Steering", da_json=".agent/j1939-json/J1939db.json")
 
     # 0x18F00913 (VDC2, SA 19)
     payload = (ctypes.c_uint8 * 8)()
@@ -306,7 +397,7 @@ def test_j1939_command_shift_pretty_decode():
     import pretty_j1939.describe
     import ctypes
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Command_Shift")
-    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    describer = RecordingDescriber("Command_Shift", da_json=".agent/j1939-json/J1939db.json")
 
     # 0x0C010005 (TC1, DA 0, SA 5)
     payload = (ctypes.c_uint8 * 8)()
@@ -324,13 +415,14 @@ def test_j1939_control_shift_joystick_pretty_decode():
     import pretty_j1939.describe
     import ctypes
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Shift_Joystick")
-    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    describer = RecordingDescriber("Control_Shift_Joystick", da_json=".agent/j1939-json/J1939db.json")
 
     # 0x18F00505 (ETC2, SA 5)
     # 0 gear (125 raw)
     payload = (ctypes.c_uint8 * 8)()
     encode_func(0, 0, payload)
     desc = describer(bytes(payload), 0x18F00505)
+
     assert desc.get("Transmission Current Gear") == "0 [gear value]"
 
     payload = (ctypes.c_uint8 * 8)()
@@ -348,34 +440,36 @@ def test_j1939_command_horn_pretty_decode():
     import pretty_j1939.describe
     import ctypes
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Command_Horn")
-    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    describer = RecordingDescriber("Command_Horn", da_json=".agent/j1939-json/J1939db.json")
 
     # 0x08EF0000 (Proprietary A) -- RAMN Uses DA=BODY_CTRL(33), SA=SHIFT_CONSOLE(5) => 0x08EF2105
     payload = (ctypes.c_uint8 * 8)()
     encode_func(255, payload)
     desc = describer(bytes(payload), 0x08EF2105)
-    assert "Bytes" in str(desc)
+
+    assert "Manufacturer Specific Information (PropA_PDU1)" in str(desc)
 
 def test_j1939_control_horn_pretty_decode():
     import pretty_j1939.describe
     import ctypes
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Horn")
-    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    describer = RecordingDescriber("Control_Horn", da_json=".agent/j1939-json/J1939db.json")
 
     # 0x18FDD421 (CM3, PGN 64980, SA 33)
     payload = (ctypes.c_uint8 * 8)()
     encode_func(1, payload)
     desc = describer(bytes(payload), 0x18FDD421)
-    assert desc.get("Horn Switch") == "1 (Enabled)"
+
+    assert desc.get("Horn Switch") == "1 (horn switch is on)"
 
 def test_j1939_command_turnindicator_pretty_decode():
     import pretty_j1939.describe
     import ctypes
     import os
     
-    db_path = os.path.expanduser("~/.config/pretty_j1939/J1939db.json")
+    db_path = ".agent/j1939-json/J1939db.json"
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Command_TurnIndicator")
-    describer = pretty_j1939.describe.get_describer(da_json=db_path)
+    describer = RecordingDescriber("Command_Turnindicator", da_json=db_path)
 
     # 0x0CFDCC05 (OEL, PGN 64972, SA 5)
     payload = (ctypes.c_uint8 * 8)()
@@ -399,25 +493,27 @@ def test_j1939_command_sidebrake_pretty_decode():
     import pretty_j1939.describe
     import ctypes
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Command_Sidebrake")
-    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    describer = RecordingDescriber("Command_Sidebrake", da_json=".agent/j1939-json/J1939db.json")
 
     # 0x18FEF105 (CCVS1, PGN 65265, SA 5)
     payload = (ctypes.c_uint8 * 8)()
     encode_func(1, payload)
     desc = describer(bytes(payload), 0x18FEF105)
-    assert desc.get("Parking Brake Switch") == "1 (Enabled)"
+
+    assert desc.get("Parking Brake Switch") == "1 (parking brake set)"
 
 def test_j1939_control_sidebrake_pretty_decode():
     import pretty_j1939.describe
     import ctypes
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Sidebrake")
-    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    describer = RecordingDescriber("Control_Sidebrake", da_json=".agent/j1939-json/J1939db.json")
 
     # 0x18FEFA0B (Brake System, PGN 65274, SA 11)
     payload = (ctypes.c_uint8 * 8)()
     encode_func(1, payload)
     desc = describer(bytes(payload), 0x18FEFA0B)
-    assert desc.get("Parking Brake Actuator") == "1 (Enabled)"
+
+    assert desc.get("Parking Brake Actuator") == "1 (parking brake actuator active)"
 
 def test_j1939_command_lights_roundtrip():
     # Command_Lights now has specific J1939 bit mapping (POS1-4)
@@ -440,39 +536,40 @@ def test_j1939_command_lights_roundtrip():
 def test_j1939_command_lights_pretty_decode():
     import pretty_j1939.describe
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Command_Lights")
-    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    describer = RecordingDescriber("Command_Lights", da_json=".agent/j1939-json/J1939db.json")
     
     # POS1: Off
     payload = (ctypes.c_uint8 * 8)()
     encode_func(1, payload)
     desc = describer(bytes(payload), 0x0CFE4105)
-    assert desc.get('Running Light Command') == '0 (Disabled)'
-    assert desc.get('Low Beam Head Light Command') == '0 (Disabled)'
-    assert desc.get('High Beam Head Light Command') == '0 (Disabled)'
+
+    assert desc.get('Running Light Command') == '0 (de-activate)'
+    assert desc.get('Low Beam Head Light Command') == '0 (de-activate)'
+    assert desc.get('High Beam Head Light Command') == '0 (de-activate)'
     
     # POS2: Park
     payload = (ctypes.c_uint8 * 8)()
     encode_func(2, payload)
     desc = describer(bytes(payload), 0x0CFE4105)
-    assert desc.get('Running Light Command') == '1 (Enabled)'
-    assert desc.get('Low Beam Head Light Command') == '0 (Disabled)'
-    assert desc.get('High Beam Head Light Command') == '0 (Disabled)'
+    assert desc.get('Running Light Command') == '1 (activate)'
+    assert desc.get('Low Beam Head Light Command') == '0 (de-activate)'
+    assert desc.get('High Beam Head Light Command') == '0 (de-activate)'
     
     # POS3: Lowbeam
     payload = (ctypes.c_uint8 * 8)()
     encode_func(3, payload)
     desc = describer(bytes(payload), 0x0CFE4105)
-    assert desc.get('Running Light Command') == '1 (Enabled)'
-    assert desc.get('Low Beam Head Light Command') == '1 (Enabled)'
-    assert desc.get('High Beam Head Light Command') == '0 (Disabled)'
+    assert desc.get('Running Light Command') == '1 (activate)'
+    assert desc.get('Low Beam Head Light Command') == '1 (activate)'
+    assert desc.get('High Beam Head Light Command') == '0 (de-activate)'
     
     # POS4: Highbeam
     payload = (ctypes.c_uint8 * 8)()
     encode_func(4, payload)
     desc = describer(bytes(payload), 0x0CFE4105)
-    assert desc.get('Running Light Command') == '1 (Enabled)'
-    assert desc.get('Low Beam Head Light Command') == '1 (Enabled)'
-    assert desc.get('High Beam Head Light Command') == '1 (Enabled)'
+    assert desc.get('Running Light Command') == '1 (activate)'
+    assert desc.get('Low Beam Head Light Command') == '1 (activate)'
+    assert desc.get('High Beam Head Light Command') == '1 (activate)'
 
 def test_j1939_control_enginekey_roundtrip():
     # RAMN values are 1 (OFF), 2 (ACC), 3 (IGN)
@@ -495,49 +592,51 @@ def test_j1939_control_enginekey_pretty_decode():
     import pretty_j1939.describe
     import ctypes
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_EngineKey")
-    describer = pretty_j1939.describe.get_describer(da_json='.agent/j1939-json/J1939db.json')
+    describer = RecordingDescriber("Control_Enginekey", da_json='.agent/j1939-json/J1939db.json')
     
     # MIDDLE: ACC (RAMN_ENGINEKEY_MIDDLE = 2)
     payload = (ctypes.c_uint8 * 8)()
     encode_func(2, payload) 
-    desc = describer(bytes(payload), 0x18FDD413) # PGN 64980 SA 19
-    assert desc.get('Operator Key Switch Accessory Power') == '1 (Enabled)'
-    assert desc.get('Operator Key Switch Ignition Power') == '0 (Disabled)'
+    desc = describer(bytes(payload), 0x18FDD413)
+ # PGN 64980 SA 19
+    assert desc.get('Operator Key Switch Accessory Power') == '1 (accessory power state active)'
+    assert desc.get('Operator Key Switch Ignition Power') == '0 (ignition state is not active)'
     
     # RIGHT: IGN (RAMN_ENGINEKEY_RIGHT = 3)
     payload = (ctypes.c_uint8 * 8)()
     encode_func(3, payload)
     desc = describer(bytes(payload), 0x18FDD413)
-    assert desc.get('Operator Key Switch Accessory Power') == '1 (Enabled)'
-    assert desc.get('Operator Key Switch Ignition Power') == '1 (Enabled)'
+    assert desc.get('Operator Key Switch Accessory Power') == '1 (accessory power state active)'
+    assert desc.get('Operator Key Switch Ignition Power') == '1 (ignition state is active)'
 
 def test_j1939_joystick_buttons_pretty_decode():
     import pretty_j1939.describe
     import ctypes
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_JoystickButtons")
-    describer = pretty_j1939.describe.get_describer(da_json=".agent/j1939-json/J1939db.json")
+    describer = RecordingDescriber("Joystick_Buttons", da_json=".agent/j1939-json/J1939db.json")
 
     # Test UP
     payload = (ctypes.c_uint8 * 8)()
-    encode_func(1, payload) # RAMN_SHIFT_UP = 1
-    desc = describer(bytes(payload), 0x18FF0205) # PropB, SA 5
+    encode_func(2, payload) # RAMN_SHIFT_UP = 2
+    desc = describer(bytes(payload), 0x18FF0205)
+ # PropB, SA 5
     assert "Bytes" in str(desc) or "Manufacturer" in str(desc)
 
     # Test DOWN
     payload = (ctypes.c_uint8 * 8)()
-    encode_func(2, payload) # RAMN_SHIFT_DOWN = 2
+    encode_func(3, payload) # RAMN_SHIFT_DOWN = 3
     desc = describer(bytes(payload), 0x18FF0205)
     assert "Bytes" in str(desc) or "Manufacturer" in str(desc)
 
     # Test LEFT
     payload = (ctypes.c_uint8 * 8)()
-    encode_func(4, payload) # RAMN_SHIFT_LEFT = 4
+    encode_func(5, payload) # RAMN_SHIFT_LEFT = 5
     desc = describer(bytes(payload), 0x18FF0205)
     assert "Bytes" in str(desc) or "Manufacturer" in str(desc)
 
     # Test RIGHT
     payload = (ctypes.c_uint8 * 8)()
-    encode_func(3, payload) # RAMN_SHIFT_RIGHT = 3
+    encode_func(4, payload) # RAMN_SHIFT_RIGHT = 4
     desc = describer(bytes(payload), 0x18FF0205)
     assert "Bytes" in str(desc) or "Manufacturer" in str(desc)
 
@@ -601,10 +700,28 @@ def test_j1939_control_lights_roundtrip():
         encode_func(val, payload)
         
         # Verify isolation/encoding matches spec
-        for i in range(8):
-            expected = 0xFA if (val & (1 << i)) else 0x00
-            assert payload[i] == expected, f"Failed encode at bit {i} for value {val}"
-                
+        assert payload[0] == (0xFA if (val & 0x08) else 0x00)
+        assert payload[1] == (0xFA if (val & 0x10) else 0x00)
+        assert payload[2] == (0xFA if (val & 0x20) else 0x00)
+        assert payload[3] == (0xFA if (val & 0x40) else 0x00)
+        assert payload[4] == (0xFA if (val & 0x80) else 0x00)
+        assert payload[5] == (0xFA if (val & 0x01) else 0x00)
+        assert payload[6] == (0xFA if (val & 0x02) else 0x00)
+        assert payload[7] == (0xFA if (val & 0x04) else 0x00)
+
         decoded_val = decode_func(payload, 8)
-        assert decoded_val == val, f"Control_Lights roundtrip failed for {hex(val)}, got {hex(decoded_val)}"
+        assert decoded_val == val, f"Roundtrip failed for val {val}, got {decoded_val}"
+
+def test_j1939_control_lights_pretty_decode():
+    import pretty_j1939.describe
+    import ctypes
+    encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Lights")
+    describer = RecordingDescriber("Control_Lights", da_json=".agent/j1939-json/J1939db.json")
+
+    # 0x18FF0021 (PropB, PGN 65280, SA 33)
+    payload = (ctypes.c_uint8 * 8)()
+    encode_func(0x08, payload) # Taillamp only
+    desc = describer(bytes(payload), 0x18FF0021)
+
+    assert "Manufacturer Defined Usage (PropB_PDU2)" in str(desc) or "Bytes" in str(desc)
 
