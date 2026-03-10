@@ -18,6 +18,7 @@
 #include "ramn_signal_defs.h"
 #include "ramn_can_database.h"
 #include "ramn_vehicle_specific.h"
+#include "ramn_sensors.h"
 #include <string.h>
 
 #ifdef EXPANSION_BODY
@@ -57,17 +58,11 @@ void RAMN_ACTUATORS_ApplyControls(uint32_t tick)
 	RAMN_Encode_Control_Shift_Joystick((uint8_t)RAMN_DBC_Handle.control_shift, (uint8_t)RAMN_DBC_Handle.joystick, &msg_control_shift.data->rawData[CAN_SIM_CONTROL_SHIFT_PAYLOAD_OFFSET / 8]);
 	RAMN_Encode_Command_Horn((uint8_t)RAMN_DBC_Handle.command_horn, &msg_command_horn.data->rawData[CAN_SIM_COMMAND_HORN_PAYLOAD_OFFSET / 8]);
 	RAMN_Encode_Command_TurnIndicator((uint16_t)RAMN_DBC_Handle.command_turnindicator, &msg_command_turnindicator.data->rawData[CAN_SIM_COMMAND_TURNINDICATOR_PAYLOAD_OFFSET / 8]);
+	RAMN_Encode_JoystickButtons((uint8_t)RAMN_SENSORS_POWERTRAIN.shiftJoystick, &msg_joystick_buttons.data->rawData[CAN_SIM_JOYSTICK_BUTTONS_PAYLOAD_OFFSET / 8]);
 
 #elif defined(EXPANSION_BODY) //BODY
 	RAMN_Encode_Control_EngineKey((uint8_t)RAMN_DBC_Handle.control_enginekey, &msg_control_enginekey.data->rawData[CAN_SIM_CONTROL_ENGINEKEY_PAYLOAD_OFFSET / 8]);
 	RAMN_Encode_Control_Lights((uint8_t)RAMN_DBC_Handle.control_lights, &msg_control_lights.data->rawData[CAN_SIM_CONTROL_LIGHTS_PAYLOAD_OFFSET / 8]);
-#ifdef ENABLE_J1939_MODE
-#if defined(TARGET_ECUD)
-	RAMN_Encode_DM1((uint8_t)RAMN_DBC_Handle.control_lights, &msg_dm1.data->rawData[0]);
-	RAMN_Encode_CCVS1((uint8_t)RAMN_DBC_Handle.control_lights, &msg_ccvs1.data->rawData[0]);
-	RAMN_Encode_EngineRun((uint8_t)RAMN_DBC_Handle.control_lights, &msg_engine_run.data->rawData[0]);
-#endif
-#endif
 
 	LEDState = (uint8_t)RAMN_DBC_Handle.control_lights;
 #if (LED_TEST_DURATION_MS > 0)

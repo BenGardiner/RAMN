@@ -33,10 +33,10 @@ static RAMN_PeriodicFDCANTx_t* periodicTxCANMsgs[] = {
 		&msg_control_steering, &msg_control_sidebrake, &msg_command_lights
 #endif
 #if defined(TARGET_ECUC)
-		&msg_control_brake, &msg_control_accel, &msg_control_shift, &msg_command_horn, &msg_command_turnindicator
+		&msg_control_brake, &msg_control_accel, &msg_control_shift, &msg_command_horn, &msg_command_turnindicator, &msg_joystick_buttons
 #endif
 #if defined(TARGET_ECUD)
-		&msg_dm1, &msg_ccvs1, &msg_engine_run, &msg_control_enginekey, &msg_control_lights
+		&msg_control_enginekey, &msg_control_lights
 #endif
 };
 
@@ -97,13 +97,12 @@ void RAMN_DBC_ProcessCANMessage(uint32_t canid, uint32_t dlc, RAMN_CANFrameData_
 			break;
 		case CAN_SIM_CONTROL_SHIFT_CANID:
 			RAMN_DBC_Handle.control_shift = RAMN_Decode_Control_Shift(&dataframe->rawData[CAN_SIM_CONTROL_SHIFT_PAYLOAD_OFFSET / 8], dlc);
-			if (dlc >= 2U)
-			{
-				RAMN_DBC_Handle.joystick = RAMN_Decode_Joystick(&dataframe->rawData[CAN_SIM_CONTROL_SHIFT_PAYLOAD_OFFSET / 8], dlc);
+			break;
+		case CAN_SIM_JOYSTICK_BUTTONS_CANID:
+			RAMN_DBC_Handle.joystick = RAMN_Decode_JoystickButtons(&dataframe->rawData[CAN_SIM_JOYSTICK_BUTTONS_PAYLOAD_OFFSET / 8], dlc);
 			#ifdef ENABLE_JOYSTICK_CONTROLS
 				RAMN_Joystick_Update(RAMN_DBC_Handle.joystick);
 			#endif
-			}
 			break;
 		case CAN_SIM_COMMAND_SHIFT_CANID:
 			RAMN_DBC_Handle.command_shift = RAMN_Decode_Command_Shift(&dataframe->rawData[CAN_SIM_COMMAND_SHIFT_PAYLOAD_OFFSET / 8], dlc);

@@ -112,14 +112,62 @@ Operate the physical controls and verify the corresponding J1939 PGNs and payloa
   Toggle the headlights switch through its four positions. 
   - **Control Status:** Observe **OEL (PGN 0xFDCC** / 64972), Source Address 0x21 (33). **CAN ID to inspect: 0x18FDCC21**. Byte 1 (bits 1-4, SPN 2872) should reflect the switch status (0=Off, 1=Park, 2=Lowbeam, 3=Highbeam).
   - **Simulator Command:** Observe **Lighting Cmd (PGN 0xFE41** / 65089), Source Address 0x05 (5). **CAN ID to inspect: 0x0CFE4105**.
-  - **Engine Malfunction Indicator (Engine LED):** Observe **DM1 (PGN 0xFE4A** / 65226), Source Address 0x21 (33). **CAN ID to inspect: 0x18FE4A21**. Byte 1 (bits 7-8, SPN 1213) should reflect the "Engine" LED state (0=Disabled, 1=Enabled).
 
 * **Turn Indicators:**
   Press the SHIFT joystick left and right.
   - **Indicator Request:** Observe **OEL (PGN 0xFDCC** / 64972), Source Address 0x05 (5). **CAN ID to inspect: 0x0CFDCC05**. Byte 2 (bits 1-4, SPN 2876) should reflect the request (1=Left, 2=Right, 3=Hazard).
-  - **Blinking Status:** Observe **OEL (PGN 0xFDCC** / 64972), Source Address 0x21 (33). **CAN ID to inspect: 0x18FDCC21**. Byte 2 (bits 1-4, SPN 2876) will toggle between the active side and 0 (Not Active) at the blinking frequency.
+
+* **ECUD LEDs (Proprietary Broadcast):**
+  The physical states of the ECUD LEDs are broadcast via a Proprietary B message (PGN 0xFF00 / 65280).
+  - Observe **Proprietary B (PGN 0xFF00** / 65280), Source Address 0x21 (33). **CAN ID to inspect: 0x18FF0021**.
+  - Each of the 8 bytes corresponds to an LED state (Byte 1 = Battery, Byte 2 = Check Engine, Byte 3 = Brake Stop, Byte 4 = Clearance, Byte 5 = Low Beam, Byte 6 = High Beam, Byte 7 = Left Turn, Byte 8 = Right Turn). A value of ``0xFA`` means the LED is On, ``0x00`` means Off.
 
 All unused bytes in the 8-byte J1939 payloads should remain set to ``0xFF`` (Not Available).
+
+J1939 CAN ID Reference Table
+############################
+
+The following table summarizes all CAN IDs transmitted by each ECU in J1939 mode:
+
++-----------+-----------------------------------------+--------------+---------------------------------------+
+| ECU       | Function / Signal Name                  | CAN ID (Hex) | Description                           |
++===========+=========================================+==============+=======================================+
+| **ECU A** | Autonomous Brake Command (XBR)          | `0x04040B21` | External Request to Brake System      |
++-----------+-----------------------------------------+--------------+---------------------------------------+
+|           | Autonomous Accel Command (TSC1)         | `0x0C00000B` | External Request to Engine            |
++-----------+-----------------------------------------+--------------+---------------------------------------+
+|           | Engine Speed Status (EEC1)              | `0x0CF00400` | Simulated Engine RPM                  |
++-----------+-----------------------------------------+--------------+---------------------------------------+
+|           | Autonomous Steering Command (PropA)     | `0x08EF13A0` | Peer-to-Peer Steering Request         |
++-----------+-----------------------------------------+--------------+---------------------------------------+
+|           | Autonomous Shift Command (TC1)          | `0x0C010305` | Peer-to-Peer Transmission Request     |
++-----------+-----------------------------------------+--------------+---------------------------------------+
+|           | Horn Command Status (CM3)               | `0x18FDD421` | Simulated Horn activation status      |
++-----------+-----------------------------------------+--------------+---------------------------------------+
+|           | Parking Brake Request (CCVS1)           | `0x18FEF105` | Simulated Parking Brake switch        |
++-----------+-----------------------------------------+--------------+---------------------------------------+
+| **ECU B** | Steering Wheel Angle Status (VDC2)      | `0x18F00913` | physical steering knob position       |
++-----------+-----------------------------------------+--------------+---------------------------------------+
+|           | Parking Brake Actuator Status (B1)      | `0x18FEFA0B` | Physical Parking Brake switch status  |
++-----------+-----------------------------------------+--------------+---------------------------------------+
+|           | Lighting Command Request (LCMD)         | `0x0CFE4105` | Physical light switch request         |
++-----------+-----------------------------------------+--------------+---------------------------------------+
+| **ECU C** | Brake Pedal Position Status (EBC1)      | `0x18F00121` | Physical Brake Pedal position %       |
++-----------+-----------------------------------------+--------------+---------------------------------------+
+|           | Accelerator Pedal Position Status (EEC2)| `0x18F00321` | Physical Accelerator Pedal position % |
++-----------+-----------------------------------------+--------------+---------------------------------------+
+|           | Current Gear/Range Status (ETC2)        | `0x18F00505` | Physical Gear/Joystick position       |
++-----------+-----------------------------------------+--------------+---------------------------------------+
+|           | Horn Request (PropA)                    | `0x18EF2105` | Physical Joystick press request       |
++-----------+-----------------------------------------+--------------+---------------------------------------+
+|           | Turn Indicator Request (OEL)            | `0x0CFDCC05` | Physical Turn Signal request          |
++-----------+-----------------------------------------+--------------+---------------------------------------+
+|           | Joystick Buttons (PropB)                | `0x18FF0205` | Physical Joystick button states (2-bit fields: Up, Down, Left, Right, Push) |
++-----------+-----------------------------------------+--------------+---------------------------------------+
+| **ECU D** | Key Switch Status (CM3)                 | `0x18FDD413` | Physical Engine Key position          |
++-----------+-----------------------------------------+--------------+---------------------------------------+
+|           | Proprietary LED Status (PropB)          | `0x18FF0021` | Physical LED indicators bitfield      |
++-----------+-----------------------------------------+--------------+---------------------------------------+
   
    
 .. _quality_troubleshooting:

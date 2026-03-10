@@ -14,6 +14,7 @@
 #define J1939_PGN_ESC1              61451   /* Electronic Steering Control 1 */
 #define J1939_PGN_ENGINE_KEY        64960   /* PGN for Engine Key / Ignition */
 #define J1939_PGN_OEL               64972   /* Operators External Light Controls */
+#define J1939_PGN_CM3               64980   /* Cab Message 3 */
 #define J1939_PGN_LIGHTS_CMD        65089   /* Lighting Command */
 #define J1939_PGN_HORN_STATUS       65098   /* Secondary Air / Horn Status */
 #define J1939_PGN_CCVS1             65265   /* Cruise Control/Vehicle Speed 1 */
