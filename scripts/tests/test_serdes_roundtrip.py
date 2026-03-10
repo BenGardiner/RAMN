@@ -261,7 +261,7 @@ def test_j1939_command_brake_pretty_decode():
     # 0 -> 0 m/s2
     payload = (ctypes.c_uint8 * 8)()
     encode_func(0, payload)
-    desc = describer(bytes(payload), 0x0C040021)
+    desc = describer(bytes(payload), 0x0C04002A)
 
     # It should be exactly 0.0 or very close (1.17e-05)
     assert "1.1718750000611067e-05 [m/s2]" in str(desc.get("External Acceleration Demand"))
@@ -269,13 +269,13 @@ def test_j1939_command_brake_pretty_decode():
     # 2048 -> 1 m/s2 deceleration
     payload = (ctypes.c_uint8 * 8)()
     encode_func(2048, payload)
-    desc = describer(bytes(payload), 0x0C040021)
+    desc = describer(bytes(payload), 0x0C04002A)
     assert str(desc.get("External Acceleration Demand")).startswith("-0.99998828")
 
     # 4095 -> approx 2 m/s2 deceleration
     payload = (ctypes.c_uint8 * 8)()
     encode_func(4095, payload)
-    desc = describer(bytes(payload), 0x0C040021)
+    desc = describer(bytes(payload), 0x0C04002A)
     assert str(desc.get("External Acceleration Demand")).startswith("-1.999")
 
 def test_j1939_control_brake_pretty_decode():
@@ -286,20 +286,20 @@ def test_j1939_control_brake_pretty_decode():
     # 0 -> 0%
     payload = (ctypes.c_uint8 * 8)()
     encode_func(0, payload)
-    desc = describer(bytes(payload), 0x18F00121)
+    desc = describer(bytes(payload), 0x18F0015A)
 
     assert desc.get("Brake Pedal Position") == "0.0 [%]"
 
     # 2048 -> ~50%
     payload = (ctypes.c_uint8 * 8)()
     encode_func(2048, payload)
-    desc = describer(bytes(payload), 0x18F00121)
+    desc = describer(bytes(payload), 0x18F0015A)
     assert desc.get("Brake Pedal Position") == "50.0 [%]"
 
     # 4095 -> 100%
     payload = (ctypes.c_uint8 * 8)()
     encode_func(4095, payload)
-    desc = describer(bytes(payload), 0x18F00121)
+    desc = describer(bytes(payload), 0x18F0015A)
     assert desc.get("Brake Pedal Position") == "100.0 [%]"
 
 
@@ -312,15 +312,15 @@ def test_j1939_command_accel_pretty_decode():
     
     payload = (ctypes.c_uint8 * 8)()
     encode_func(0, payload)
-    assert describer(bytes(payload), 0x0C00000B).get("Engine Requested Speed/Speed Limit") == "0.0 [rpm]"
+    assert describer(bytes(payload), 0x0C00002A).get("Engine Requested Speed/Speed Limit") == "0.0 [rpm]"
 
     payload = (ctypes.c_uint8 * 8)()
     encode_func(2048, payload)
-    assert describer(bytes(payload), 0x0C00000B).get("Engine Requested Speed/Speed Limit") == "256.0 [rpm]"
+    assert describer(bytes(payload), 0x0C00002A).get("Engine Requested Speed/Speed Limit") == "256.0 [rpm]"
 
     payload = (ctypes.c_uint8 * 8)()
     encode_func(4095, payload)
-    assert describer(bytes(payload), 0x0C00000B).get("Engine Requested Speed/Speed Limit") == "511.875 [rpm]"
+    assert describer(bytes(payload), 0x0C00002A).get("Engine Requested Speed/Speed Limit") == "511.875 [rpm]"
 
 def test_j1939_control_accel_pretty_decode():
     import pretty_j1939.describe
@@ -330,15 +330,15 @@ def test_j1939_control_accel_pretty_decode():
 
     payload = (ctypes.c_uint8 * 8)()
     encode_func(0, payload)
-    assert describer(bytes(payload), 0x18F00321).get("Accelerator Pedal Position 1") == "0.0 [%]"
+    assert describer(bytes(payload), 0x18F0035A).get("Accelerator Pedal Position 1") == "0.0 [%]"
 
     payload = (ctypes.c_uint8 * 8)()
     encode_func(2048, payload)
-    assert describer(bytes(payload), 0x18F00321).get("Accelerator Pedal Position 1") == "50.0 [%]"
+    assert describer(bytes(payload), 0x18F0035A).get("Accelerator Pedal Position 1") == "50.0 [%]"
 
     payload = (ctypes.c_uint8 * 8)()
     encode_func(4095, payload)
-    assert describer(bytes(payload), 0x18F00321).get("Accelerator Pedal Position 1") == "100.0 [%]"
+    assert describer(bytes(payload), 0x18F0035A).get("Accelerator Pedal Position 1") == "100.0 [%]"
 
 def test_j1939_status_rpm_pretty_decode():
     import pretty_j1939.describe
@@ -348,15 +348,15 @@ def test_j1939_status_rpm_pretty_decode():
 
     payload = (ctypes.c_uint8 * 8)()
     encode_func(0, payload)
-    assert describer(bytes(payload), 0x18F00400).get("Engine Speed") == "0.0 [rpm]"
+    assert describer(bytes(payload), 0x18F0042A).get("Engine Speed") == "0.0 [rpm]"
 
     payload = (ctypes.c_uint8 * 8)()
     encode_func(2048, payload)
-    assert describer(bytes(payload), 0x18F00400).get("Engine Speed") == "256.0 [rpm]"
+    assert describer(bytes(payload), 0x18F0042A).get("Engine Speed") == "256.0 [rpm]"
 
     payload = (ctypes.c_uint8 * 8)()
     encode_func(4095, payload)
-    assert describer(bytes(payload), 0x18F00400).get("Engine Speed") == "511.875 [rpm]"
+    assert describer(bytes(payload), 0x18F0042A).get("Engine Speed") == "511.875 [rpm]"
 
 
 def test_j1939_command_steering_pretty_decode():
@@ -368,7 +368,7 @@ def test_j1939_command_steering_pretty_decode():
     # 0x08EF13A0 (Proprietary A, DA 19, SA 160)
     payload = (ctypes.c_uint8 * 8)()
     encode_func(4095, payload)
-    desc = describer(bytes(payload), 0x08EF13A0)
+    desc = describer(bytes(payload), 0x08EF132A)
 
     # Proprietary A won't have specific semantic decoding, just a byte dump
     assert "Manufacturer Specific Information (PropA_PDU1)" in str(desc)
@@ -402,37 +402,37 @@ def test_j1939_command_shift_pretty_decode():
     # 0x0C010005 (TC1, DA 0, SA 5)
     payload = (ctypes.c_uint8 * 8)()
     encode_func(0, payload)
-    assert describer(bytes(payload), 0x0C010005).get("Transmission Requested Gear") == "0 [gear value]"
+    assert describer(bytes(payload), 0x0C01002A).get("Transmission Requested Gear") == "0 [gear value]"
 
     payload = (ctypes.c_uint8 * 8)()
     encode_func(5, payload)
-    assert describer(bytes(payload), 0x0C010005).get("Transmission Requested Gear") == "5 [gear value]"
+    assert describer(bytes(payload), 0x0C01002A).get("Transmission Requested Gear") == "5 [gear value]"
 
     payload = (ctypes.c_uint8 * 8)()
     encode_func(125, payload)
-    assert describer(bytes(payload), 0x0C010005).get("Transmission Requested Gear") == "125 [gear value]"
+    assert describer(bytes(payload), 0x0C01002A).get("Transmission Requested Gear") == "125 [gear value]"
 def test_j1939_control_shift_joystick_pretty_decode():
     import pretty_j1939.describe
     import ctypes
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Shift_Joystick")
     describer = RecordingDescriber("Control_Shift_Joystick", da_json=".agent/j1939-json/J1939db.json")
 
-    # 0x18F00505 (ETC2, SA 5)
+    # 0x18F00503 (ETC2, SA 3)
     # 0 gear (125 raw)
     payload = (ctypes.c_uint8 * 8)()
     encode_func(0, 0, payload)
-    desc = describer(bytes(payload), 0x18F00505)
+    desc = describer(bytes(payload), 0x18F00503)
 
     assert desc.get("Transmission Current Gear") == "0 [gear value]"
 
     payload = (ctypes.c_uint8 * 8)()
     encode_func(64, 64, payload)
-    desc = describer(bytes(payload), 0x18F00505)
+    desc = describer(bytes(payload), 0x18F00503)
     assert desc.get("Transmission Current Gear") == "64 [gear value]"
 
     payload = (ctypes.c_uint8 * 8)()
     encode_func(125, 125, payload)
-    desc = describer(bytes(payload), 0x18F00505)
+    desc = describer(bytes(payload), 0x18F00503)
     assert desc.get("Transmission Current Gear") == "125 [gear value]"
 
 
@@ -455,10 +455,10 @@ def test_j1939_control_horn_pretty_decode():
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Horn")
     describer = RecordingDescriber("Control_Horn", da_json=".agent/j1939-json/J1939db.json")
 
-    # 0x18FDD421 (CM3, PGN 64980, SA 33)
+    # 0x18FDD42A (CM3, PGN 64980, SA 42)
     payload = (ctypes.c_uint8 * 8)()
     encode_func(1, payload)
-    desc = describer(bytes(payload), 0x18FDD421)
+    desc = describer(bytes(payload), 0x18FDD42A)
 
     assert desc.get("Horn Switch") == "1 (horn switch is on)"
 
@@ -498,7 +498,7 @@ def test_j1939_command_sidebrake_pretty_decode():
     # 0x18FEF105 (CCVS1, PGN 65265, SA 5)
     payload = (ctypes.c_uint8 * 8)()
     encode_func(1, payload)
-    desc = describer(bytes(payload), 0x18FEF105)
+    desc = describer(bytes(payload), 0x18FEF12A)
 
     assert desc.get("Parking Brake Switch") == "1 (parking brake set)"
 
@@ -508,10 +508,10 @@ def test_j1939_control_sidebrake_pretty_decode():
     encode_func = getattr(ramn_can_db_j1939, "RAMN_Encode_Control_Sidebrake")
     describer = RecordingDescriber("Control_Sidebrake", da_json=".agent/j1939-json/J1939db.json")
 
-    # 0x18FEFA0B (Brake System, PGN 65274, SA 11)
+    # 0x18FEFA0D (Brake System, PGN 65274, SA 13)
     payload = (ctypes.c_uint8 * 8)()
     encode_func(1, payload)
-    desc = describer(bytes(payload), 0x18FEFA0B)
+    desc = describer(bytes(payload), 0x18FEFA0D)
 
     assert desc.get("Parking Brake Actuator") == "1 (parking brake actuator active)"
 
@@ -541,7 +541,7 @@ def test_j1939_command_lights_pretty_decode():
     # POS1: Off
     payload = (ctypes.c_uint8 * 8)()
     encode_func(1, payload)
-    desc = describer(bytes(payload), 0x0CFE4105)
+    desc = describer(bytes(payload), 0x0CFE4147)
 
     assert desc.get('Running Light Command') == '0 (de-activate)'
     assert desc.get('Low Beam Head Light Command') == '0 (de-activate)'
@@ -550,7 +550,7 @@ def test_j1939_command_lights_pretty_decode():
     # POS2: Park
     payload = (ctypes.c_uint8 * 8)()
     encode_func(2, payload)
-    desc = describer(bytes(payload), 0x0CFE4105)
+    desc = describer(bytes(payload), 0x0CFE4147)
     assert desc.get('Running Light Command') == '1 (activate)'
     assert desc.get('Low Beam Head Light Command') == '0 (de-activate)'
     assert desc.get('High Beam Head Light Command') == '0 (de-activate)'
@@ -558,7 +558,7 @@ def test_j1939_command_lights_pretty_decode():
     # POS3: Lowbeam
     payload = (ctypes.c_uint8 * 8)()
     encode_func(3, payload)
-    desc = describer(bytes(payload), 0x0CFE4105)
+    desc = describer(bytes(payload), 0x0CFE4147)
     assert desc.get('Running Light Command') == '1 (activate)'
     assert desc.get('Low Beam Head Light Command') == '1 (activate)'
     assert desc.get('High Beam Head Light Command') == '0 (de-activate)'
@@ -566,7 +566,7 @@ def test_j1939_command_lights_pretty_decode():
     # POS4: Highbeam
     payload = (ctypes.c_uint8 * 8)()
     encode_func(4, payload)
-    desc = describer(bytes(payload), 0x0CFE4105)
+    desc = describer(bytes(payload), 0x0CFE4147)
     assert desc.get('Running Light Command') == '1 (activate)'
     assert desc.get('Low Beam Head Light Command') == '1 (activate)'
     assert desc.get('High Beam Head Light Command') == '1 (activate)'
@@ -597,15 +597,15 @@ def test_j1939_control_enginekey_pretty_decode():
     # MIDDLE: ACC (RAMN_ENGINEKEY_MIDDLE = 2)
     payload = (ctypes.c_uint8 * 8)()
     encode_func(2, payload) 
-    desc = describer(bytes(payload), 0x18FDD413)
- # PGN 64980 SA 19
+    desc = describer(bytes(payload), 0x18FDD421)
+ # PGN 64980 SA 33
     assert desc.get('Operator Key Switch Accessory Power') == '1 (accessory power state active)'
     assert desc.get('Operator Key Switch Ignition Power') == '0 (ignition state is not active)'
     
     # RIGHT: IGN (RAMN_ENGINEKEY_RIGHT = 3)
     payload = (ctypes.c_uint8 * 8)()
     encode_func(3, payload)
-    desc = describer(bytes(payload), 0x18FDD413)
+    desc = describer(bytes(payload), 0x18FDD421)
     assert desc.get('Operator Key Switch Accessory Power') == '1 (accessory power state active)'
     assert desc.get('Operator Key Switch Ignition Power') == '1 (ignition state is active)'
 
