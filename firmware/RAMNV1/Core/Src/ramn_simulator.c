@@ -45,6 +45,35 @@ void RAMN_SIM_UpdatePeriodic(uint32_t tick)
 	}
 #endif
 
+#if defined(RAMN_FORCE_AUTOPILOT)
+	// Forced autopilot/fuzzer mode: periodically randomize command/control values at 1 Hz,
+	// bypassing sensor overrides and UDS autopilot enable requirements.
+	{
+		static uint32_t lastRandomTick = 0U;
+
+		if ((tick - lastRandomTick) >= 1000U)
+		{
+			lastRandomTick = tick;
+
+			RAMN_DBC_Handle.command_brake         = RAMN_RNG_Pop16() & 0xFFF;
+			RAMN_DBC_Handle.command_accel          = RAMN_RNG_Pop16() & 0xFFF;
+			RAMN_DBC_Handle.command_steer          = RAMN_RNG_Pop16() & 0xFFF;
+			RAMN_DBC_Handle.command_shift          = (uint16_t)(RAMN_RNG_Pop8() % (MAX_GEAR_VALUE + 1U));
+			RAMN_DBC_Handle.command_lights         = (uint16_t)(RAMN_RNG_Pop8() % (RAMN_LIGHTSWITCH_POS4 + 1U));
+			RAMN_DBC_Handle.command_horn           = RAMN_RNG_Pop8() & 0x01;
+			RAMN_DBC_Handle.command_sidebrake      = (uint16_t)(RAMN_RNG_Pop8() & 0x01);
+			RAMN_DBC_Handle.command_turnindicator  = RAMN_RNG_Pop16();
+		}
+
+		// In forced mode, always follow command_* regardless of pedals/gear/sensors
+		RAMN_DBC_Handle.control_brake     = RAMN_DBC_Handle.command_brake;
+		RAMN_DBC_Handle.control_accel     = RAMN_DBC_Handle.command_accel;
+		RAMN_DBC_Handle.control_shift     = (RAMN_DBC_Handle.command_shift) & 0xFF;
+		RAMN_DBC_Handle.control_steer     = RAMN_DBC_Handle.command_steer;
+		RAMN_DBC_Handle.control_sidebrake = RAMN_DBC_Handle.command_sidebrake;
+	}
+#else /* !RAMN_FORCE_AUTOPILOT */
+
 #if defined(EXPANSION_POWERTRAIN)
 	// Powertrain ECU sends back data from the Self-Driving agent, except if sensors are above a certain threshold
 	if ((!RAMN_SIM_AutopilotEnabled) || ((RAMN_SENSORS_POWERTRAIN.brakePotentiometer >= 0x20) || (RAMN_SENSORS_POWERTRAIN.accelPotentiometer >= 0x20)))
@@ -116,6 +145,8 @@ void RAMN_SIM_UpdatePeriodic(uint32_t tick)
 	RAMN_ACTUATORS_SetLampState(LED_LEFTTURN	, ((RAMN_DBC_Handle.command_turnindicator&0xFF00) != 0U) & ((tick % 1000) >= 500));
 	RAMN_ACTUATORS_SetLampState(LED_RIGHTTURN	, ((RAMN_DBC_Handle.command_turnindicator&0x00FF) != 0U) & ((tick % 1000) >= 500));
 #endif
+
+#endif /* RAMN_FORCE_AUTOPILOT */
 }
 
 

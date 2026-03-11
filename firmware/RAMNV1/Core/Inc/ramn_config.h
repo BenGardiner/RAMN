@@ -118,6 +118,13 @@
 // Note that it also needs to be activated by a slcan command, or by setting RAMN_DEBUG_ENABLE in ramn_debug.c to True.
 #define ENABLE_USB_DEBUG
 
+// Enable this flag to force autopilot/fuzzer mode.
+// When enabled, the ECU will periodically randomize command/control values at 1 Hz
+// without requiring UDS activation or physical sensor inputs.
+// Can also be enabled via build flag: -D RAMN_FORCE_AUTOPILOT
+// Do not use in production - this is for testing and fuzzing only.
+//#define RAMN_FORCE_AUTOPILOT
+
 // Number of times to retry entering bootloader mode of another ECU before giving up
 #define BOOTLOADER_MAX_ATTEMPTS 20
 
