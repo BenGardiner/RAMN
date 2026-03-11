@@ -50,6 +50,13 @@ void RAMN_SIM_UpdatePeriodic(uint32_t tick)
 	// bypassing sensor overrides and UDS autopilot enable requirements.
 	{
 		static uint32_t lastRandomTick = 0U;
+		static uint8_t firstRun = 1U;
+
+		if (firstRun != 0U)
+		{
+			lastRandomTick = tick;
+			firstRun = 0U;
+		}
 
 		if ((tick - lastRandomTick) >= 1000U)
 		{

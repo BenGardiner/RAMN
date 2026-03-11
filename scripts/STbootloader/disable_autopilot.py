@@ -31,12 +31,14 @@ def disable_autopilot(port_hint="AUTO"):
         # Stop any active simulator/CARLA serial connection
         ser.write(b'c0\r')
         time.sleep(0.2)
-        ser.read(ser.in_waiting or 1)
+        if ser.in_waiting:
+            ser.read(ser.in_waiting)
         # Send UDS RoutineControl StopRoutine for autopilot routine 0x0207 to ECU A
         # slcan format: t + CAN_ID(7e0) + DLC(5) + ISO-TP SF(04) + UDS(31 02 02 07) + \r
         ser.write(b't7e050431020207\r')
         time.sleep(0.2)
-        ser.read(ser.in_waiting or 1)
+        if ser.in_waiting:
+            ser.read(ser.in_waiting)
         ser.close()
     except Exception:
         pass
