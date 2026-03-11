@@ -45,7 +45,7 @@ uint16_t RAMN_Decode_Command_Brake(const uint8_t* payload, uint32_t dlc) {
     /* SPN 2920 (XBR External Deceleration Demand). Bytes 1-2. PGN 1024 (XBR). */
     uint16_t j1939_val = (uint16_t)payload[0] | ((uint16_t)payload[1] << 8);
     if (j1939_val > 64254) return 0;
-    return (64254 - j1939_val) / 2;
+    return (uint16_t)((64254U - j1939_val) / 2U);
 }
 #endif
 
@@ -75,7 +75,7 @@ uint16_t RAMN_Decode_Control_Brake(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 2U) return 0;
     /* SPN 521 (Brake Pedal Position). Byte 2. PGN 61441 (EBC1). */
     uint8_t j1939_val = payload[1];
-    if (j1939_val > 250) return 4095;
+    if (j1939_val > 250) return (j1939_val == 0xFF) ? 0 : 4095;
     return (uint16_t)((j1939_val * 4095U) / 250U);
 }
 #endif
@@ -106,7 +106,8 @@ void RAMN_Encode_Command_Accel(uint16_t value, uint8_t* payload) {
 uint16_t RAMN_Decode_Command_Accel(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 3U) return 0;
     /* SPN 898 (Engine Requested Speed/Speed Limit). Bytes 2-3. PGN 0 (TSC1). */
-    return (uint16_t)payload[1] | ((uint16_t)payload[2] << 8);
+    uint16_t val = (uint16_t)payload[1] | ((uint16_t)payload[2] << 8);
+    return (val == 0xFFFF) ? 0 : val;
 }
 #endif
 
@@ -136,7 +137,7 @@ uint16_t RAMN_Decode_Control_Accel(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 2U) return 0;
     /* SPN 91 (Accelerator Pedal Position 1). Byte 2. PGN 61443 (EEC2). */
     uint8_t j1939_val = payload[1];
-    if (j1939_val > 250) return 4095;
+    if (j1939_val > 250) return (j1939_val == 0xFF) ? 0 : 4095;
     return (uint16_t)((j1939_val * 4095U) / 250U);
 }
 #endif
@@ -166,7 +167,8 @@ void RAMN_Encode_Status_RPM(uint16_t value, uint8_t* payload) {
 uint16_t RAMN_Decode_Status_RPM(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 5U) return 0;
     /* SPN 190 (Engine Speed). Bytes 4-5. PGN 61444 (EEC1). */
-    return (uint16_t)payload[3] | ((uint16_t)payload[4] << 8);
+    uint16_t val = (uint16_t)payload[3] | ((uint16_t)payload[4] << 8);
+    return (val == 0xFFFF) ? 0 : val;
 }
 #endif
 
@@ -193,7 +195,8 @@ void RAMN_Encode_Command_Steering(uint16_t value, uint8_t* payload) {
 
 uint16_t RAMN_Decode_Command_Steering(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 2U) return 0;
-    return (uint16_t)payload[0] | ((uint16_t)payload[1] << 8);
+    uint16_t val = (uint16_t)payload[0] | ((uint16_t)payload[1] << 8);
+    return (val == 0xFFFF) ? 2048 : val;
 }
 #endif
 
@@ -215,17 +218,18 @@ void RAMN_Encode_Control_Steering(uint16_t value, uint8_t* payload) {
     /* SPN 2928 (Steering Wheel Angle). Bytes 1-2. PGN 61449 (VDC2). */
     /* 0 rad maps to raw 32127. Ramn_val 0-4095 centers at 2048. */
     memset(payload, 0xFF, 8);
-    uint16_t j1939_val = (value > 35456) ? 65535 : (value + 30079); /* 2048 -> 32127 (0 rad) */
+    uint16_t j1939_val = (value > 35456) ? 65535 : (uint16_t)(value + 30079); /* 2048 -> 32127 (0 rad) */
     payload[0] = (uint8_t)(j1939_val & 0xFF);
     payload[1] = (uint8_t)((j1939_val >> 8) & 0xFF);
 }
 
 uint16_t RAMN_Decode_Control_Steering(const uint8_t* payload, uint32_t dlc) {
-    if (dlc < 2U) return 0;
+    if (dlc < 2U) return 2048;
     /* SPN 2928 (Steering Wheel Angle). Bytes 1-2. PGN 61449 (VDC2). */
     uint16_t j1939_val = (uint16_t)payload[0] | ((uint16_t)payload[1] << 8);
+    if (j1939_val == 0xFFFF) return 2048;
     if (j1939_val < 30079) return 0;
-    return j1939_val - 30079;
+    return (uint16_t)(j1939_val - 30079);
 }
 #endif
 
@@ -250,7 +254,9 @@ void RAMN_Encode_Command_Shift(uint8_t value, uint8_t* payload) {
 uint8_t RAMN_Decode_Command_Shift(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 3U) return 0;
     /* SPN 525 (Transmission Requested Gear). Byte 3. PGN 256 (TC1). */
-    return (uint8_t)(payload[2] - 125);
+    uint8_t raw = payload[2];
+    if (raw < 125 || raw == 0xFF) return 0;
+    return (uint8_t)(raw - 125);
 }
 #endif
 
@@ -304,7 +310,9 @@ void RAMN_Encode_Control_Shift_Joystick(uint8_t shift_value, uint8_t joystick_va
 uint8_t RAMN_Decode_Control_Shift(const uint8_t* payload, uint32_t dlc) {
     if (dlc < 4U) return 0;
     /* SPN 523 (Current Gear). Byte 4. PGN 61445 (ETC2). */
-    return (uint8_t)(payload[3] - 125);
+    uint8_t raw = payload[3];
+    if (raw < 125 || raw == 0xFF) return 0;
+    return (uint8_t)(raw - 125);
 }
 
 uint8_t RAMN_Decode_Joystick(const uint8_t* payload, uint32_t dlc) {

@@ -119,6 +119,8 @@
 #define CAN_SIM_BRS_DEFAULT       						FDCAN_BRS_OFF      // Bit rate switching ON or OFF
 #define CAN_SIM_DLC_DEFAULT   							FDCAN_DLC_BYTES_8  // Default CAN payload size
 
+#define J1939_EMPTY_PAYLOAD { .data = { { .rawData = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF} } } }
+
 // Message specific settings
 #ifdef ENABLE_J1939_MODE
   #include "ramn_j1939.h"
@@ -330,7 +332,11 @@
   #define CAN_SIM_COMMAND_SHIFT_COUNTER_OFFSET -1
   #define CAN_SIM_COMMAND_SHIFT_CRC_OFFSET -1
 
-  #define CAN_SIM_CONTROL_HORN_CANID      J1939_BCAST_ID(6, J1939_PGN_CM3, J1939_SA_HEADWAY_CTRL)
+  #if defined(TARGET_ECUA)
+    #define CAN_SIM_CONTROL_HORN_CANID      J1939_UCAST_ID(6, J1939_PGN_PROPA, J1939_DA_POWERTRAIN_CTRL, J1939_SA_HEADWAY_CTRL)
+  #else
+    #define CAN_SIM_CONTROL_HORN_CANID      J1939_UCAST_ID(6, J1939_PGN_PROPA, J1939_DA_BODY_CTRL, J1939_SA_POWERTRAIN_CTRL)
+  #endif
   #define CAN_SIM_CONTROL_HORN_PERIODMS   100
   #define CAN_SIM_CONTROL_HORN_IDTYPE     CAN_SIM_J1939_IDTYPE
   #define CAN_SIM_CONTROL_HORN_FORMAT     CAN_SIM_J1939_FORMAT
@@ -356,7 +362,6 @@
 #define RECEIVE_JOYSTICK_BUTTONS
 #define RECEIVE_CONTROL_SIDEBRAKE
 #define RECEIVE_CONTROL_ENGINEKEY
-#define RECEIVE_COMMAND_HORN
 #define RECEIVE_COMMAND_LIGHTS
 #define RECEIVE_CONTROL_LIGHTS
 #elif defined(TARGET_ECUB)
@@ -371,12 +376,14 @@
 #define RECEIVE_STATUS_RPM
 #define RECEIVE_COMMAND_SIDEBRAKE
 #define RECEIVE_COMMAND_SHIFT
+#define RECEIVE_COMMAND_HORN
 #elif defined(TARGET_ECUD)
 #define RECEIVE_CONTROL_BRAKE
 #define RECEIVE_CONTROL_SIDEBRAKE
 #define RECEIVE_STATUS_RPM
 #define RECEIVE_COMMAND_TURNINDICATOR
 #define RECEIVE_COMMAND_LIGHTS
+#define RECEIVE_CONTROL_HORN
 #endif
 
 ///////////////////////////////////////
@@ -423,6 +430,7 @@ extern RAMN_PeriodicFDCANTx_t msg_command_lights;
 extern RAMN_PeriodicFDCANTx_t msg_control_brake;
 extern RAMN_PeriodicFDCANTx_t msg_control_accel;
 extern RAMN_PeriodicFDCANTx_t msg_control_shift;
+extern RAMN_PeriodicFDCANTx_t msg_control_horn;
 extern RAMN_PeriodicFDCANTx_t msg_command_horn;
 extern RAMN_PeriodicFDCANTx_t msg_command_turnindicator;
 extern RAMN_PeriodicFDCANTx_t msg_joystick_buttons;
