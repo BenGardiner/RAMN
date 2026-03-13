@@ -33,6 +33,134 @@ static uint32_t loopCounter = 0;
 // Number of time RAMN_CUSTOM_TIM6ISR has been called (by default, time in s from boot)
 static volatile uint32_t tim6val = 0;
 
+#ifdef ENABLE_J1939_MODE
+
+/* ---------- J1939 helper: extract fields from 29-bit extended CAN ID ------ */
+static uint8_t J1939_GetPF(uint32_t canId)  { return (uint8_t)((canId >> 16) & 0xFFU); }
+static uint8_t J1939_GetPS(uint32_t canId)  { return (uint8_t)((canId >> 8)  & 0xFFU); }
+static uint8_t J1939_GetSA(uint32_t canId)  { return (uint8_t)(canId & 0xFFU); }
+
+/* Build a 29-bit J1939 CAN ID (EDP=0, DP=0) */
+static uint32_t J1939_MakeId(uint8_t prio, uint8_t pf, uint8_t da, uint8_t sa)
+{
+	return ((uint32_t)(prio & 0x7U) << 26) | ((uint32_t)pf << 16) | ((uint32_t)da << 8) | (uint32_t)sa;
+}
+
+/*
+ * J1939 NAME (8 bytes, little-endian on the CAN bus).
+ * Layout (64 bits, MSB first):
+ *   Bit 63      : Arbitrary Address Capable = 0
+ *   Bits 62-60  : Industry Group = 0
+ *   Bits 59-56  : Vehicle System Instance = 0
+ *   Bits 55-49  : Vehicle System = 0
+ *   Bit 48      : Reserved = 0
+ *   Bits 47-40  : Function (= primary SA for each ECU)
+ *   Bits 39-35  : Function Instance = 0
+ *   Bits 34-32  : ECU Instance = 0
+ *   Bits 31-21  : Manufacturer Code = 0
+ *   Bits 20-0   : Identity Number (unique per ECU: 1-4)
+ */
+static const uint8_t j1939_name[8] = {
+#if defined(TARGET_ECUA)
+	0x01, 0x00, 0x00, 0x00, 0x00, 0x2A, 0x00, 0x00  /* Identity=1, Function=42 (Headway Ctrl) */
+#elif defined(TARGET_ECUB)
+	0x02, 0x00, 0x00, 0x00, 0x00, 0x13, 0x00, 0x00  /* Identity=2, Function=19 (Steering Ctrl) */
+#elif defined(TARGET_ECUC)
+	0x03, 0x00, 0x00, 0x00, 0x00, 0x5A, 0x00, 0x00  /* Identity=3, Function=90 (Powertrain Ctrl) */
+#elif defined(TARGET_ECUD)
+	0x04, 0x00, 0x00, 0x00, 0x00, 0x21, 0x00, 0x00  /* Identity=4, Function=33 (Body Ctrl) */
+#endif
+};
+
+/* ECU Identification string for PGN 64965 (fields delimited by '*') */
+static const char j1939_ecu_id[] =
+#if defined(TARGET_ECUA)
+	"RAMN*ECU_A*0001*UNIT1*";
+#elif defined(TARGET_ECUB)
+	"RAMN*ECU_B*0002*UNIT2*";
+#elif defined(TARGET_ECUC)
+	"RAMN*ECU_C*0003*UNIT3*";
+#elif defined(TARGET_ECUD)
+	"RAMN*ECU_D*0004*UNIT4*";
+#endif
+
+/* Initialise common fields of a J1939 CAN TX header */
+static void J1939_InitTxHeader(FDCAN_TxHeaderTypeDef *h, uint32_t canId)
+{
+	h->Identifier           = canId;
+	h->IdType               = FDCAN_EXTENDED_ID;
+	h->TxFrameType          = FDCAN_DATA_FRAME;
+	h->DataLength           = FDCAN_DLC_BYTES_8;
+	h->ErrorStateIndicator  = FDCAN_ESI_ACTIVE;
+	h->BitRateSwitch        = FDCAN_BRS_OFF;
+	h->FDFormat             = FDCAN_CLASSIC_CAN;
+	h->TxEventFifoControl   = FDCAN_NO_TX_EVENTS;
+	h->MessageMarker        = 0;
+}
+
+/* Send Address Claimed (PGN 60928) – 8-byte NAME payload, broadcast */
+static void J1939_SendAddressClaimed(void)
+{
+	FDCAN_TxHeaderTypeDef header;
+	J1939_InitTxHeader(&header, J1939_MakeId(6, J1939_PF_ADDRESS_CLAIMED, 0xFF, J1939_ECU_SA));
+	RAMN_FDCAN_SendMessage(&header, j1939_name);
+}
+
+/* Send TP.CM BAM + TP.DT packets for ECU Identification (PGN 64965) */
+static void J1939_SendEcuIdBAM(void)
+{
+	uint16_t totalSize = (uint16_t)(sizeof(j1939_ecu_id) - 1U); /* exclude null terminator */
+	uint8_t  numPackets = (uint8_t)((totalSize + 6U) / 7U);     /* ceiling division */
+	FDCAN_TxHeaderTypeDef header;
+	uint8_t payload[8];
+
+	/* ---- TP.CM BAM ---- */
+	J1939_InitTxHeader(&header, J1939_MakeId(7, J1939_PF_TP_CM, 0xFF, J1939_ECU_SA));
+	payload[0] = J1939_TP_CM_BAM;
+	payload[1] = (uint8_t)(totalSize & 0xFFU);
+	payload[2] = (uint8_t)((totalSize >> 8) & 0xFFU);
+	payload[3] = numPackets;
+	payload[4] = 0xFFU;                                  /* reserved */
+	payload[5] = (uint8_t)(J1939_PGN_ECU_ID & 0xFFU);
+	payload[6] = (uint8_t)((J1939_PGN_ECU_ID >> 8) & 0xFFU);
+	payload[7] = (uint8_t)((J1939_PGN_ECU_ID >> 16) & 0xFFU);
+	RAMN_FDCAN_SendMessage(&header, payload);
+
+	/* ---- TP.DT data packets ---- */
+	header.Identifier = J1939_MakeId(7, J1939_PF_TP_DT, 0xFF, J1939_ECU_SA);
+	for (uint8_t seq = 1; seq <= numPackets; seq++)
+	{
+		RAMN_memset(payload, 0xFF, 8U);
+		payload[0] = seq;
+		uint16_t offset = (uint16_t)((seq - 1U) * 7U);
+		for (uint8_t j = 0; j < 7U && (offset + j) < totalSize; j++)
+		{
+			payload[1U + j] = (uint8_t)j1939_ecu_id[offset + j];
+		}
+		RAMN_FDCAN_SendMessage(&header, payload);
+	}
+}
+
+/* Send TP Connection Abort back to the requestor */
+static void J1939_SendTPConnAbort(uint8_t da, uint32_t pgn)
+{
+	FDCAN_TxHeaderTypeDef header;
+	uint8_t payload[8];
+
+	J1939_InitTxHeader(&header, J1939_MakeId(7, J1939_PF_TP_CM, da, J1939_ECU_SA));
+	payload[0] = J1939_TP_CM_ABORT;
+	payload[1] = 0x01U;                               /* reason: already in session */
+	payload[2] = 0xFFU;
+	payload[3] = 0xFFU;
+	payload[4] = 0xFFU;
+	payload[5] = (uint8_t)(pgn & 0xFFU);
+	payload[6] = (uint8_t)((pgn >> 8) & 0xFFU);
+	payload[7] = (uint8_t)((pgn >> 16) & 0xFFU);
+	RAMN_FDCAN_SendMessage(&header, payload);
+}
+
+#endif /* ENABLE_J1939_MODE */
+
 void 	RAMN_CUSTOM_Init(uint32_t tick)
 {
 	loopCounter = 0;
@@ -53,6 +181,49 @@ void	RAMN_CUSTOM_ProcessRxCANMessage(const FDCAN_RxHeaderTypeDef* pHeader, const
 	// pHeader->FDFormat: FDCAN_CLASSIC_CAN or FDCAN_FD_CAN
 	// pHeader->RxTimestamp: 16-bit value for RX timestamp, MAY NOT BE CONFIGURED CORRECTLY
 	// See FilterIndex and IsFilterMatchingFrame for additional fields.
+
+#ifdef ENABLE_J1939_MODE
+	if (pHeader->IdType == FDCAN_EXTENDED_ID)
+	{
+		uint32_t canId  = pHeader->Identifier;
+		uint8_t  pf     = J1939_GetPF(canId);
+		uint8_t  ps_da  = J1939_GetPS(canId);
+		uint8_t  dlc    = DLCtoUINT8(pHeader->DataLength);
+
+		/* --- Handle Request PGN (PF = 0xEA) --- */
+		if (pf == J1939_PF_REQUEST && dlc >= 3U)
+		{
+			/* Accept broadcast (DA=0xFF) or unicast to our SA */
+			if (ps_da == J1939_DA_BROADCAST || ps_da == J1939_ECU_SA)
+			{
+				uint32_t reqPGN = (uint32_t)data[0]
+				                | ((uint32_t)data[1] << 8)
+				                | ((uint32_t)data[2] << 16);
+
+				if (reqPGN == J1939_PGN_ADDRESS_CLAIMED)
+				{
+					J1939_SendAddressClaimed();
+				}
+				else if (reqPGN == J1939_PGN_ECU_ID)
+				{
+					J1939_SendEcuIdBAM();
+				}
+			}
+		}
+
+		/* --- Handle TP.CM RTS (PF = 0xEC, ctrl = 0x10) --- */
+		if (pf == J1939_PF_TP_CM && ps_da == J1939_ECU_SA && dlc >= 8U)
+		{
+			if (data[0] == J1939_TP_CM_RTS)
+			{
+				uint32_t pgn = (uint32_t)data[5]
+				             | ((uint32_t)data[6] << 8)
+				             | ((uint32_t)data[7] << 16);
+				J1939_SendTPConnAbort(J1939_GetSA(canId), pgn);
+			}
+		}
+	}
+#endif
 }
 
 #ifdef ENABLE_CDC
