@@ -60,7 +60,7 @@
 static uint8_t* kwp_answerData;
 static uint16_t* kwp_answerSize;
 
-static FDCAN_TxHeaderTypeDef kwpMsgHeader =
+FDCAN_TxHeaderTypeDef kwpMsgHeader =
 {
 		.Identifier  = KWP_TX_CANID,
 		.DataLength = FDCAN_DLC_BYTES_0,
@@ -73,7 +73,7 @@ static FDCAN_TxHeaderTypeDef kwpMsgHeader =
 		. MessageMarker = 0,
 };
 
-static FDCAN_TxHeaderTypeDef kwpFCMsgHeader =
+FDCAN_TxHeaderTypeDef kwpFCMsgHeader =
 {
 		.Identifier  = KWP_TX_CANID,
 		.DataLength = FDCAN_DLC_BYTES_0,
@@ -346,7 +346,32 @@ RAMN_Bool_t RAMN_KWP_ProcessRxCANMessage(const FDCAN_RxHeaderTypeDef* pHeader, c
 {
 	size_t xBytesSent;
 	RAMN_Bool_t result = False;
+	RAMN_Bool_t matched = False;
+
+#ifdef ENABLE_J1939_MODE
+	uint8_t prio = (pHeader->Identifier >> 26) & 0x7;
+	uint8_t pf = (pHeader->Identifier >> 16) & 0xFF;
+	uint8_t da = (pHeader->Identifier >> 8) & 0xFF;
+	uint8_t sa = pHeader->Identifier & 0xFF;
+
+	// Proprietary A (PF 0xEF) is used for KWP2000 and XCP. Physical only.
+	// TSA must be in range 0xF1-0xFA for KWP2000.
+	if (pHeader->IdType == FDCAN_EXTENDED_ID && pf == 0xEF && da == J1939_ECU_SA && sa >= 0xF1 && sa <= 0xFA)
+	{
+		kwpMsgHeader.Identifier = J1939_UCAST_ID(prio, 0xEF00, sa, J1939_ECU_SA);
+		kwpMsgHeader.IdType = FDCAN_EXTENDED_ID;
+		kwpFCMsgHeader.Identifier = kwpMsgHeader.Identifier;
+		kwpFCMsgHeader.IdType = FDCAN_EXTENDED_ID;
+		matched = True;
+	}
+#else
 	if (pHeader->Identifier == KWP_RX_CANID)
+	{
+		matched = True;
+	}
+#endif
+
+	if (matched == True)
 	{
 		RAMN_ISOTP_ProcessRxMsg(&RAMN_KWP_ISOTPHandler,DLCtoUINT8(pHeader->DataLength),data, tick);
 
