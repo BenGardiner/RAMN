@@ -1,0 +1,424 @@
+#!/usr/bin/env python3
+"""
+Tests for the J1939 CA scanner (RAMN_J1939_Scanner.py).
+
+Validates that:
+- All four scanner techniques accumulate detections (never overwrite).
+- The return value is a sorted list of (sa, detections) tuples.
+- Each SA's detections list contains one entry per technique that found it.
+- SAs found by only one technique still appear correctly.
+"""
+
+import sys
+import os
+import unittest
+
+# Ensure the scripts directory is on the Python path so that the
+# ``utils`` package can be imported without installing it.
+_scripts_dir = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..")
+)
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+
+from utils.RAMN_J1939_Scanner import (
+    j1939_scan,
+    j1939_make_id,
+    j1939_get_pf,
+    j1939_get_sa,
+    _record,
+    PF_REQUEST,
+    PF_TP_CM,
+    PF_ADDRESS_CLAIMED,
+    PGN_ADDRESS_CLAIMED,
+    PGN_ECU_ID,
+    TP_CM_BAM,
+    TP_CM_ABORT,
+    DA_BROADCAST,
+    SCANNER_SA,
+)
+
+
+# ---------------------------------------------------------------------------
+# Lightweight CAN message stub (no python-can dependency required)
+# ---------------------------------------------------------------------------
+class FakeCANMsg:
+    """Minimal CAN message object for testing."""
+
+    def __init__(self, arbitration_id, data, is_extended_id=True):
+        self.arbitration_id = arbitration_id
+        self.data = bytes(data)
+        self.is_extended_id = is_extended_id
+
+    def __repr__(self):
+        return (
+            f"FakeCANMsg(id=0x{self.arbitration_id:08X}, "
+            f"data={self.data.hex()}, ext={self.is_extended_id})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# ECU definitions matching the firmware (ramn_j1939.h)
+# ---------------------------------------------------------------------------
+ECU_SA = {
+    "A": 42,  # 0x2A – HEADWAY_CTRL
+    "B": 19,  # 0x13 – STEERING_CTRL
+    "C": 90,  # 0x5A – POWERTRAIN_CTRL
+    "D": 33,  # 0x21 – BODY_CTRL
+}
+
+
+def _encode_pgn_le(pgn):
+    return bytes([pgn & 0xFF, (pgn >> 8) & 0xFF, (pgn >> 16) & 0xFF])
+
+
+def _make_addr_claimed(sa):
+    """Build an Address Claimed response from *sa*."""
+    cid = j1939_make_id(6, PF_ADDRESS_CLAIMED, DA_BROADCAST, sa)
+    # NAME payload (simplified – only identity byte differs per ECU)
+    name = bytearray(8)
+    name[0] = sa  # use SA as identity for simplicity
+    return FakeCANMsg(cid, bytes(name))
+
+
+def _make_bam(sa):
+    """Build a TP.CM BAM response from *sa* for PGN 64965."""
+    cid = j1939_make_id(7, PF_TP_CM, DA_BROADCAST, sa)
+    payload = bytearray(8)
+    payload[0] = TP_CM_BAM
+    payload[1] = 0x15  # total size low
+    payload[2] = 0x00  # total size high
+    payload[3] = 0x03  # num packets
+    payload[4] = 0xFF  # reserved
+    pgn = _encode_pgn_le(PGN_ECU_ID)
+    payload[5] = pgn[0]
+    payload[6] = pgn[1]
+    payload[7] = pgn[2]
+    return FakeCANMsg(cid, bytes(payload))
+
+
+def _make_unicast_resp(sa):
+    """Build a generic extended-frame response from *sa*."""
+    # Any extended CAN frame whose SA matches the probed DA
+    cid = j1939_make_id(6, PF_ADDRESS_CLAIMED, DA_BROADCAST, sa)
+    return FakeCANMsg(cid, b"\xff" * 8)
+
+
+def _make_tp_abort(sa, requestor_sa=SCANNER_SA):
+    """Build a TP.CM Abort response from *sa* directed to *requestor_sa*."""
+    cid = j1939_make_id(7, PF_TP_CM, requestor_sa, sa)
+    payload = bytearray(8)
+    payload[0] = TP_CM_ABORT
+    payload[1] = 0x01
+    payload[2] = 0xFF
+    payload[3] = 0xFF
+    payload[4] = 0xFF
+    pgn = _encode_pgn_le(PGN_ECU_ID)
+    payload[5] = pgn[0]
+    payload[6] = pgn[1]
+    payload[7] = pgn[2]
+    return FakeCANMsg(cid, bytes(payload))
+
+
+# ---------------------------------------------------------------------------
+# Helpers for building scripted send/recv functions
+# ---------------------------------------------------------------------------
+class FakeSocket:
+    """A fake CAN socket that replays scripted responses."""
+
+    def __init__(self):
+        self.sent = []  # list of (can_id, data)
+
+
+class MockBus:
+    """A context-aware mock CAN bus.
+
+    Register responses with ``add_response(probe_id, response_pkt)``
+    where *probe_id* is the CAN-ID of the probe frame that should
+    trigger the response.  When the scanner calls *send_fn* with a
+    matching probe CAN-ID, subsequent *recv_fn* calls return the
+    queued responses for that probe (one at a time), then ``None``.
+    """
+
+    def __init__(self):
+        self._responses = {}  # probe_id -> list of packets
+        self._current = iter([])
+        self.sent = []  # (can_id, data) log of all probes sent
+
+    def add_response(self, probe_id, pkt):
+        self._responses.setdefault(probe_id, []).append(pkt)
+
+    def send_fn(self, sock, can_id, data):
+        self.sent.append((can_id, data))
+        # Queue up responses for this probe
+        self._current = iter(self._responses.get(can_id, []))
+
+    def recv_fn(self, sock, timeout):
+        return next(self._current, None)
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+class TestRecordAccumulates(unittest.TestCase):
+    """_record() must *append* to the detection list, never overwrite."""
+
+    def test_single_detection(self):
+        found = {}
+        _record(found, 0x2A, "addr_claim", "pkt1")
+        self.assertEqual(len(found[0x2A]), 1)
+        self.assertEqual(found[0x2A][0]["method"], "addr_claim")
+
+    def test_multiple_detections(self):
+        found = {}
+        _record(found, 0x2A, "addr_claim", "pkt1")
+        _record(found, 0x2A, "ecu_id", "pkt2")
+        _record(found, 0x2A, "unicast", "pkt3")
+        _record(found, 0x2A, "rts_probe", "pkt4")
+        self.assertEqual(len(found[0x2A]), 4)
+        methods = [d["method"] for d in found[0x2A]]
+        self.assertEqual(methods, ["addr_claim", "ecu_id", "unicast", "rts_probe"])
+
+    def test_different_sas(self):
+        found = {}
+        _record(found, 0x2A, "addr_claim", "pkt1")
+        _record(found, 0x13, "addr_claim", "pkt2")
+        self.assertIn(0x2A, found)
+        self.assertIn(0x13, found)
+        self.assertEqual(len(found[0x2A]), 1)
+        self.assertEqual(len(found[0x13]), 1)
+
+
+class TestReturnFormat(unittest.TestCase):
+    """j1939_scan must return a sorted list of (sa, detections) tuples."""
+
+    def test_returns_sorted_list(self):
+        """All four ECUs respond to addr_claim and ecu_id."""
+        bus = MockBus()
+        # addr_claim probe id
+        ac_probe = j1939_make_id(6, PF_REQUEST, DA_BROADCAST, SCANNER_SA)
+        for sa in ECU_SA.values():
+            bus.add_response(ac_probe, _make_addr_claimed(sa))
+
+        # ecu_id probe id (same CAN-ID, different payload – MockBus
+        # keys only on CAN-ID, so we use a second probe_id entry)
+        # Both probes use the same CAN-ID; the bus returns all queued
+        # responses for that ID.  For this test, we add BAM responses
+        # too under the same probe_id; the scanner will get addr_claim
+        # responses first (from technique 1) and BAM responses (from
+        # technique 2).
+        for sa in ECU_SA.values():
+            bus.add_response(ac_probe, _make_bam(sa))
+
+        result = j1939_scan(
+            FakeSocket(),
+            timeout=0.01,
+            timeout_per_da=0.0,
+            send_fn=bus.send_fn,
+            recv_fn=bus.recv_fn,
+        )
+
+        # Must be a list
+        self.assertIsInstance(result, list)
+
+        # Must be sorted by SA
+        sas = [sa for sa, _ in result]
+        self.assertEqual(sas, sorted(sas))
+
+        # Each entry is (int, list)
+        for sa, detections in result:
+            self.assertIsInstance(sa, int)
+            self.assertIsInstance(detections, list)
+            for d in detections:
+                self.assertIn("method", d)
+                self.assertIn("packet", d)
+
+
+class TestMultiMethodDetection(unittest.TestCase):
+    """An SA found by multiple techniques must list *all* of them."""
+
+    def test_addr_claim_and_ecu_id(self):
+        """SA found by both addr_claim and ecu_id."""
+        sa = ECU_SA["A"]  # 0x2A
+        bus = MockBus()
+        probe_id = j1939_make_id(6, PF_REQUEST, DA_BROADCAST, SCANNER_SA)
+        bus.add_response(probe_id, _make_addr_claimed(sa))
+        bus.add_response(probe_id, _make_bam(sa))
+
+        result = j1939_scan(
+            FakeSocket(),
+            timeout=0.01,
+            timeout_per_da=0.0,
+            send_fn=bus.send_fn,
+            recv_fn=bus.recv_fn,
+        )
+
+        # Find SA in result
+        sa_entry = dict(result).get(sa)
+        self.assertIsNotNone(sa_entry, f"SA 0x{sa:02X} should be found")
+        methods = [d["method"] for d in sa_entry]
+        self.assertIn("addr_claim", methods)
+        self.assertIn("ecu_id", methods)
+        self.assertEqual(len(methods), 2)
+
+
+class TestAllFourTechniquesOnAllECUs(unittest.TestCase):
+    """Simulate all four ECUs responding to all four techniques."""
+
+    def _build_bus(self):
+        """Build a MockBus with responses for all four techniques."""
+        bus = MockBus()
+        ecu_sas = set(ECU_SA.values())
+
+        # Broadcast probes (addr_claim + ecu_id share the same CAN-ID)
+        bcast_probe = j1939_make_id(6, PF_REQUEST, DA_BROADCAST, SCANNER_SA)
+        for sa in ECU_SA.values():
+            bus.add_response(bcast_probe, _make_addr_claimed(sa))
+        for sa in ECU_SA.values():
+            bus.add_response(bcast_probe, _make_bam(sa))
+
+        # Unicast probes: one probe per DA, response only from known SAs
+        for da in range(0x00, 0xFE):
+            probe_id = j1939_make_id(6, PF_REQUEST, da, SCANNER_SA)
+            if da in ecu_sas:
+                bus.add_response(probe_id, _make_unicast_resp(da))
+
+        # RTS probes: one probe per DA, response only from known SAs
+        for da in range(0x00, 0xFE):
+            probe_id = j1939_make_id(7, PF_TP_CM, da, SCANNER_SA)
+            if da in ecu_sas:
+                bus.add_response(probe_id, _make_tp_abort(da))
+
+        return bus
+
+    def test_all_ecus_all_methods(self):
+        bus = self._build_bus()
+
+        result = j1939_scan(
+            FakeSocket(),
+            timeout=0.01,
+            timeout_per_da=0.01,
+            send_fn=bus.send_fn,
+            recv_fn=bus.recv_fn,
+        )
+
+        result_dict = dict(result)
+
+        # All four ECUs should be found
+        for ecu, sa in ECU_SA.items():
+            self.assertIn(sa, result_dict,
+                          f"ECU {ecu} (SA=0x{sa:02X}) should be found")
+            methods = [d["method"] for d in result_dict[sa]]
+            self.assertIn("addr_claim", methods,
+                          f"ECU {ecu}: addr_claim missing")
+            self.assertIn("ecu_id", methods,
+                          f"ECU {ecu}: ecu_id missing")
+            self.assertIn("unicast", methods,
+                          f"ECU {ecu}: unicast missing")
+            self.assertIn("rts_probe", methods,
+                          f"ECU {ecu}: rts_probe missing")
+            self.assertEqual(len(methods), 4,
+                             f"ECU {ecu}: expected 4 methods, got {methods}")
+
+    def test_sorted_by_sa(self):
+        bus = self._build_bus()
+
+        result = j1939_scan(
+            FakeSocket(),
+            timeout=0.01,
+            timeout_per_da=0.01,
+            send_fn=bus.send_fn,
+            recv_fn=bus.recv_fn,
+        )
+
+        sas = [sa for sa, _ in result]
+        self.assertEqual(sas, sorted(sas),
+                         "Result must be sorted by SA ascending")
+
+
+class TestSingleMethodDetection(unittest.TestCase):
+    """SAs discovered by only one technique must still appear."""
+
+    def test_unicast_only(self):
+        """An SA found only by unicast is included in results."""
+        bus = MockBus()
+        # Only register a response for unicast probe to DA=0x47
+        probe_id = j1939_make_id(6, PF_REQUEST, 0x47, SCANNER_SA)
+        bus.add_response(probe_id, _make_unicast_resp(0x47))
+
+        result = j1939_scan(
+            FakeSocket(),
+            timeout=0.01,
+            timeout_per_da=0.01,
+            send_fn=bus.send_fn,
+            recv_fn=bus.recv_fn,
+        )
+
+        result_dict = dict(result)
+        self.assertIn(0x47, result_dict)
+        methods = [d["method"] for d in result_dict[0x47]]
+        self.assertEqual(methods, ["unicast"])
+
+
+class TestEmptyScan(unittest.TestCase):
+    """When no ECU responds, the result is an empty list."""
+
+    def test_no_responses(self):
+        bus = MockBus()
+
+        result = j1939_scan(
+            FakeSocket(),
+            timeout=0.01,
+            timeout_per_da=0.0,
+            send_fn=bus.send_fn,
+            recv_fn=bus.recv_fn,
+        )
+
+        self.assertEqual(result, [])
+
+
+class TestProbesSent(unittest.TestCase):
+    """Verify that the scanner sends the correct probe messages."""
+
+    def test_addr_claim_probe(self):
+        """addr_claim sends a broadcast Request for PGN 60928."""
+        bus = MockBus()
+
+        j1939_scan(
+            FakeSocket(),
+            timeout=0.01,
+            timeout_per_da=0.0,
+            send_fn=bus.send_fn,
+            recv_fn=bus.recv_fn,
+        )
+
+        # First sent frame should be the addr_claim broadcast
+        self.assertGreater(len(bus.sent), 0)
+        can_id, data = bus.sent[0]
+        self.assertEqual(j1939_get_pf(can_id), PF_REQUEST)
+        self.assertEqual((can_id >> 8) & 0xFF, DA_BROADCAST)
+        self.assertEqual(data, _encode_pgn_le(PGN_ADDRESS_CLAIMED))
+
+    def test_ecu_id_probe(self):
+        """ecu_id sends a broadcast Request for PGN 64965."""
+        bus = MockBus()
+
+        j1939_scan(
+            FakeSocket(),
+            timeout=0.01,
+            timeout_per_da=0.0,
+            send_fn=bus.send_fn,
+            recv_fn=bus.recv_fn,
+        )
+
+        # Second sent frame should be the ecu_id broadcast
+        self.assertGreaterEqual(len(bus.sent), 2)
+        can_id, data = bus.sent[1]
+        self.assertEqual(j1939_get_pf(can_id), PF_REQUEST)
+        self.assertEqual((can_id >> 8) & 0xFF, DA_BROADCAST)
+        self.assertEqual(data, _encode_pgn_le(PGN_ECU_ID))
+
+
+if __name__ == "__main__":
+    unittest.main()
