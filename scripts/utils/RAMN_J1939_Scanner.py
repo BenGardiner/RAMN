@@ -7,7 +7,7 @@
 """
 J1939 CA (Controller Application) scanner.
 
-Probes a CAN bus for J1939 ECUs using four techniques and returns every
+Probes a CAN bus for J1939 ECUs using five techniques and returns every
 source address (SA) discovered, together with **all** methods that
 detected it.
 
@@ -24,6 +24,9 @@ unicast      Unicast Request (PF=0xEA, DA=ECU-SA) for PGN 60928
 
 rts_probe    TP.CM_RTS (PF=0xEC, DA=ECU-SA)
              → TP.CM_CTS (ctrl=0x11) or TP_Conn_Abort (ctrl=0xFF)
+
+uds          UDS Tester Present (PF=0xDA, DA=ECU-SA)
+             → Positive response 0x7E from ECU-SA
 
 Return value
 ------------
@@ -52,6 +55,7 @@ PF_REQUEST = 0xEA
 PF_TP_DT = 0xEB
 PF_TP_CM = 0xEC
 PF_ADDRESS_CLAIMED = 0xEE
+PF_DIAG = 0xDA
 
 TP_CM_RTS = 0x10
 TP_CM_CTS = 0x11
@@ -61,6 +65,10 @@ TP_CM_ABORT = 0xFF
 DA_BROADCAST = 0xFF
 
 SCANNER_SA = 0xFE  # SA used by the scanner tool
+
+# UDS constants
+UDS_TESTER_PRESENT_REQ = b'\x02\x3e\x00'      # Tester Present, no suppress
+UDS_TESTER_PRESENT_RESP = b'\x02\x7e\x00'      # Positive response
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -237,6 +245,30 @@ def _scan_rts_probe(sock, found, timeout_per_da, send_fn, recv_fn,
                     _record(found, sa, "rts_probe", pkt)
 
 
+def _scan_uds(sock, found, timeout_per_da, send_fn, recv_fn,
+              da_range=range(0x00, 0xFE)):
+    """Technique 5 – UDS Tester Present (PF=0xDA) to each DA."""
+    for da in da_range:
+        probe_id = j1939_make_id(6, PF_DIAG, da, SCANNER_SA)
+        send_fn(sock, probe_id, UDS_TESTER_PRESENT_REQ)
+        log.debug("uds: probing DA=0x%02X", da)
+
+        deadline = time.monotonic() + timeout_per_da
+        while time.monotonic() < deadline:
+            pkt = recv_fn(sock, max(0, deadline - time.monotonic()))
+            if pkt is None:
+                continue
+            if not _is_extended(pkt):
+                continue
+            cid = _pkt_id(pkt)
+            sa = j1939_get_sa(cid)
+            if sa == da:
+                data = _pkt_data(pkt)
+                if data == UDS_TESTER_PRESENT_RESP:
+                    log.debug("uds: response from SA=0x%02X", sa)
+                    _record(found, sa, "uds", pkt)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -282,6 +314,7 @@ def j1939_scan(sock, *, force=False, timeout=0.5, timeout_per_da=0.05,
     _scan_ecu_id(sock, found, timeout, send_fn, recv_fn)
     _scan_unicast(sock, found, timeout_per_da, send_fn, recv_fn)
     _scan_rts_probe(sock, found, timeout_per_da, send_fn, recv_fn)
+    _scan_uds(sock, found, timeout_per_da, send_fn, recv_fn)
 
     # Return as a sorted list of (sa, detections) tuples
     return sorted(found.items(), key=lambda item: item[0])

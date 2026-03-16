@@ -3,7 +3,7 @@
 Tests for the J1939 CA scanner (RAMN_J1939_Scanner.py).
 
 Validates that:
-- All four scanner techniques accumulate detections (never overwrite).
+- All five scanner techniques accumulate detections (never overwrite).
 - The return value is a sorted list of (sa, detections) tuples.
 - Each SA's detections list contains one entry per technique that found it.
 - SAs found by only one technique still appear correctly.
@@ -29,6 +29,7 @@ from utils.RAMN_J1939_Scanner import (
     _record,
     PF_REQUEST,
     PF_TP_CM,
+    PF_DIAG,
     PF_ADDRESS_CLAIMED,
     PGN_ADDRESS_CLAIMED,
     PGN_ECU_ID,
@@ -36,6 +37,7 @@ from utils.RAMN_J1939_Scanner import (
     TP_CM_ABORT,
     DA_BROADCAST,
     SCANNER_SA,
+    UDS_TESTER_PRESENT_RESP,
 )
 
 
@@ -120,6 +122,12 @@ def _make_tp_abort(sa, requestor_sa=SCANNER_SA):
     return FakeCANMsg(cid, bytes(payload))
 
 
+def _make_uds_resp(sa, requestor_sa=SCANNER_SA):
+    """Build a UDS Tester Present positive response from *sa*."""
+    cid = j1939_make_id(6, PF_DIAG, requestor_sa, sa)
+    return FakeCANMsg(cid, UDS_TESTER_PRESENT_RESP)
+
+
 # ---------------------------------------------------------------------------
 # Helpers for building scripted send/recv functions
 # ---------------------------------------------------------------------------
@@ -176,9 +184,10 @@ class TestRecordAccumulates(unittest.TestCase):
         _record(found, 0x2A, "ecu_id", "pkt2")
         _record(found, 0x2A, "unicast", "pkt3")
         _record(found, 0x2A, "rts_probe", "pkt4")
-        self.assertEqual(len(found[0x2A]), 4)
+        _record(found, 0x2A, "uds", "pkt5")
+        self.assertEqual(len(found[0x2A]), 5)
         methods = [d["method"] for d in found[0x2A]]
-        self.assertEqual(methods, ["addr_claim", "ecu_id", "unicast", "rts_probe"])
+        self.assertEqual(methods, ["addr_claim", "ecu_id", "unicast", "rts_probe", "uds"])
 
     def test_different_sas(self):
         found = {}
@@ -263,11 +272,11 @@ class TestMultiMethodDetection(unittest.TestCase):
         self.assertEqual(len(methods), 2)
 
 
-class TestAllFourTechniquesOnAllECUs(unittest.TestCase):
-    """Simulate all four ECUs responding to all four techniques."""
+class TestAllFiveTechniquesOnAllECUs(unittest.TestCase):
+    """Simulate all four ECUs responding to all five techniques."""
 
     def _build_bus(self):
-        """Build a MockBus with responses for all four techniques."""
+        """Build a MockBus with responses for all five techniques."""
         bus = MockBus()
         ecu_sas = set(ECU_SA.values())
 
@@ -289,6 +298,12 @@ class TestAllFourTechniquesOnAllECUs(unittest.TestCase):
             probe_id = j1939_make_id(7, PF_TP_CM, da, SCANNER_SA)
             if da in ecu_sas:
                 bus.add_response(probe_id, _make_tp_abort(da))
+
+        # UDS probes: one probe per DA, response only from known SAs
+        for da in range(0x00, 0xFE):
+            probe_id = j1939_make_id(6, PF_DIAG, da, SCANNER_SA)
+            if da in ecu_sas:
+                bus.add_response(probe_id, _make_uds_resp(da))
 
         return bus
 
@@ -318,8 +333,10 @@ class TestAllFourTechniquesOnAllECUs(unittest.TestCase):
                           f"ECU {ecu}: unicast missing")
             self.assertIn("rts_probe", methods,
                           f"ECU {ecu}: rts_probe missing")
-            self.assertEqual(len(methods), 4,
-                             f"ECU {ecu}: expected 4 methods, got {methods}")
+            self.assertIn("uds", methods,
+                          f"ECU {ecu}: uds missing")
+            self.assertEqual(len(methods), 5,
+                             f"ECU {ecu}: expected 5 methods, got {methods}")
 
     def test_sorted_by_sa(self):
         bus = self._build_bus()
@@ -418,6 +435,102 @@ class TestProbesSent(unittest.TestCase):
         self.assertEqual(j1939_get_pf(can_id), PF_REQUEST)
         self.assertEqual((can_id >> 8) & 0xFF, DA_BROADCAST)
         self.assertEqual(data, _encode_pgn_le(PGN_ECU_ID))
+
+
+class TestUdsScanDetection(unittest.TestCase):
+    """UDS scan technique sends Tester Present and expects positive response."""
+
+    def test_uds_only(self):
+        """An SA found only by UDS is included in results."""
+        bus = MockBus()
+        probe_id = j1939_make_id(6, PF_DIAG, 0x2A, SCANNER_SA)
+        bus.add_response(probe_id, _make_uds_resp(0x2A))
+
+        result = j1939_scan(
+            FakeSocket(),
+            timeout=0.01,
+            timeout_per_da=0.01,
+            send_fn=bus.send_fn,
+            recv_fn=bus.recv_fn,
+        )
+
+        result_dict = dict(result)
+        self.assertIn(0x2A, result_dict)
+        methods = [d["method"] for d in result_dict[0x2A]]
+        self.assertEqual(methods, ["uds"])
+
+    def test_uds_wrong_response_ignored(self):
+        """Non-positive UDS response is not recorded."""
+        bus = MockBus()
+        # Register a response with wrong data (negative response)
+        probe_id = j1939_make_id(6, PF_DIAG, 0x2A, SCANNER_SA)
+        bad_resp = FakeCANMsg(
+            j1939_make_id(6, PF_DIAG, SCANNER_SA, 0x2A),
+            b'\x03\x7f\x3e\x10',  # negative response
+        )
+        bus.add_response(probe_id, bad_resp)
+
+        result = j1939_scan(
+            FakeSocket(),
+            timeout=0.01,
+            timeout_per_da=0.01,
+            send_fn=bus.send_fn,
+            recv_fn=bus.recv_fn,
+        )
+
+        result_dict = dict(result)
+        # SA 0x2A should not appear from UDS (wrong response data)
+        if 0x2A in result_dict:
+            methods = [d["method"] for d in result_dict[0x2A]]
+            self.assertNotIn("uds", methods)
+
+    def test_uds_probe_format(self):
+        """UDS probe uses PF=0xDA and Tester Present payload."""
+        bus = MockBus()
+
+        j1939_scan(
+            FakeSocket(),
+            timeout=0.01,
+            timeout_per_da=0.0,
+            send_fn=bus.send_fn,
+            recv_fn=bus.recv_fn,
+        )
+
+        # Find a UDS probe in the sent frames (after 2 broadcast + 254 unicast + 254 RTS)
+        uds_probes = [
+            (cid, data) for cid, data in bus.sent
+            if j1939_get_pf(cid) == PF_DIAG
+        ]
+        self.assertGreater(len(uds_probes), 0, "UDS probes should be sent")
+        can_id, data = uds_probes[0]
+        self.assertEqual(j1939_get_pf(can_id), PF_DIAG)
+        self.assertEqual(data, b'\x02\x3e\x00')
+
+    def test_uds_combined_with_other_methods(self):
+        """SA found by addr_claim and UDS lists both methods."""
+        sa = ECU_SA["B"]  # 0x13
+        bus = MockBus()
+        # addr_claim response
+        bcast_probe = j1939_make_id(6, PF_REQUEST, DA_BROADCAST, SCANNER_SA)
+        bus.add_response(bcast_probe, _make_addr_claimed(sa))
+        # UDS response
+        uds_probe = j1939_make_id(6, PF_DIAG, sa, SCANNER_SA)
+        bus.add_response(uds_probe, _make_uds_resp(sa))
+
+        result = j1939_scan(
+            FakeSocket(),
+            timeout=0.01,
+            timeout_per_da=0.01,
+            send_fn=bus.send_fn,
+            recv_fn=bus.recv_fn,
+        )
+
+        result_dict = dict(result)
+        self.assertIn(sa, result_dict)
+        methods = [d["method"] for d in result_dict[sa]]
+        self.assertIn("addr_claim", methods)
+        self.assertIn("uds", methods)
+        self.assertEqual(len(methods), 2)
 
 
 if __name__ == "__main__":

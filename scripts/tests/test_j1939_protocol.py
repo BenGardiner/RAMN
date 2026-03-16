@@ -3,7 +3,7 @@
 Test suite for J1939-TP and NAME support.
 
 Validates that the firmware protocol definitions and CAN ID construction
-are correct for each of the four scanner techniques:
+are correct for each of the five scanner techniques:
 
   Technique    Probe sent                              Expected response
   ------------ --------------------------------------- ------------------------------------
@@ -11,6 +11,7 @@ are correct for each of the four scanner techniques:
   ecu_id       Bcast Request (PF=0xEA,DA=0xFF) PGN64965  TP.CM BAM (PF=0xEC, ctrl=0x20) PGN64965
   unicast      Ucast Request (PF=0xEA,DA=ECU-SA) PGN60928  Extended frame SA==probed DA
   rts_probe    TP.CM_RTS  (PF=0xEC,DA=ECU-SA)          TP.CM_CTS(0x11) or Abort(0xFF)
+  uds          UDS TesterPresent (PF=0xDA,DA=ECU-SA)   Positive response 0x7E
 """
 
 import struct
@@ -29,6 +30,7 @@ PF_REQUEST          = 0xEA
 PF_TP_DT            = 0xEB
 PF_TP_CM            = 0xEC
 PF_ADDRESS_CLAIMED  = 0xEE
+PF_DIAG             = 0xDA
 
 TP_CM_RTS   = 0x10
 TP_CM_CTS   = 0x11
@@ -333,6 +335,47 @@ class TestRtsProbeScanner(unittest.TestCase):
         """Either CTS or Abort is acceptable per spec."""
         self.assertIn(TP_CM_CTS, [0x11])
         self.assertIn(TP_CM_ABORT, [0xFF])
+
+
+class TestUdsScanner(unittest.TestCase):
+    """
+    Technique: uds
+    Probe:    UDS Tester Present (PF=0xDA, DA=ECU-SA)
+    Expected: Positive response 0x7E from ECU-SA
+    """
+
+    def test_uds_probe_format(self):
+        """Verify the UDS probe CAN ID uses PF=0xDA."""
+        for ecu, sa in ECU_SA.items():
+            probe_id = j1939_make_id(6, PF_DIAG, sa, 0xFE)
+            self.assertEqual(j1939_get_pf(probe_id), PF_DIAG,
+                             f"UDS probe PF must be 0xDA for ECU {ecu}")
+            self.assertEqual(j1939_get_ps(probe_id), sa,
+                             f"UDS probe DA must be ECU {ecu}'s SA")
+
+    def test_uds_tester_present_payload(self):
+        """Tester Present request: SID=0x3E, subfunction=0x00."""
+        payload = b'\x02\x3e\x00'
+        self.assertEqual(payload[0], 0x02, "Length byte")
+        self.assertEqual(payload[1], 0x3E, "Tester Present SID")
+        self.assertEqual(payload[2], 0x00, "Subfunction (no suppress)")
+
+    def test_uds_positive_response(self):
+        """Positive response: SID+0x40 = 0x7E."""
+        response = b'\x02\x7e\x00'
+        self.assertEqual(response[0], 0x02, "Length byte")
+        self.assertEqual(response[1], 0x7E, "Tester Present positive response SID")
+
+    def test_uds_response_id_format(self):
+        """Response CAN ID from each ECU uses PF=0xDA, DA=requestor."""
+        requestor_sa = 0xFE
+        for ecu, sa in ECU_SA.items():
+            resp_id = j1939_make_id(6, PF_DIAG, requestor_sa, sa)
+            self.assertEqual(j1939_get_pf(resp_id), PF_DIAG)
+            self.assertEqual(j1939_get_ps(resp_id), requestor_sa,
+                             f"Response DA must be requestor's SA")
+            self.assertEqual(j1939_get_sa(resp_id), sa,
+                             f"Response SA must be ECU {ecu}'s SA")
 
 
 class TestJ1939ModeGuard(unittest.TestCase):
