@@ -67,8 +67,8 @@ DA_BROADCAST = 0xFF
 SCANNER_SA = 0xFE  # SA used by the scanner tool
 
 # UDS constants
-UDS_TESTER_PRESENT_REQ = b'\x02\x3e\x00'      # Tester Present, no suppress
-UDS_TESTER_PRESENT_RESP = b'\x02\x7e\x00'      # Positive response
+UDS_TESTER_PRESENT_REQUEST = b'\x02\x3e\x00'   # Tester Present, no suppress
+UDS_TESTER_PRESENT_RESPONSE = b'\x02\x7e\x00'  # Positive response
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -250,7 +250,7 @@ def _scan_uds(sock, found, timeout_per_da, send_fn, recv_fn,
     """Technique 5 – UDS Tester Present (PF=0xDA) to each DA."""
     for da in da_range:
         probe_id = j1939_make_id(6, PF_DIAG, da, SCANNER_SA)
-        send_fn(sock, probe_id, UDS_TESTER_PRESENT_REQ)
+        send_fn(sock, probe_id, UDS_TESTER_PRESENT_REQUEST)
         log.debug("uds: probing DA=0x%02X", da)
 
         deadline = time.monotonic() + timeout_per_da
@@ -264,7 +264,7 @@ def _scan_uds(sock, found, timeout_per_da, send_fn, recv_fn,
             sa = j1939_get_sa(cid)
             if sa == da:
                 data = _pkt_data(pkt)
-                if data == UDS_TESTER_PRESENT_RESP:
+                if data == UDS_TESTER_PRESENT_RESPONSE:
                     log.debug("uds: response from SA=0x%02X", sa)
                     _record(found, sa, "uds", pkt)
 

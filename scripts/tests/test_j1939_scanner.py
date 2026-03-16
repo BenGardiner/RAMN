@@ -37,7 +37,7 @@ from utils.RAMN_J1939_Scanner import (
     TP_CM_ABORT,
     DA_BROADCAST,
     SCANNER_SA,
-    UDS_TESTER_PRESENT_RESP,
+    UDS_TESTER_PRESENT_RESPONSE,
 )
 
 
@@ -125,7 +125,7 @@ def _make_tp_abort(sa, requestor_sa=SCANNER_SA):
 def _make_uds_resp(sa, requestor_sa=SCANNER_SA):
     """Build a UDS Tester Present positive response from *sa*."""
     cid = j1939_make_id(6, PF_DIAG, requestor_sa, sa)
-    return FakeCANMsg(cid, UDS_TESTER_PRESENT_RESP)
+    return FakeCANMsg(cid, UDS_TESTER_PRESENT_RESPONSE)
 
 
 # ---------------------------------------------------------------------------
