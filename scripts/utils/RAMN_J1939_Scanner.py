@@ -74,6 +74,9 @@ UDS_TESTER_PRESENT_RESPONSE = b'\x02\x7e\x00'  # Positive response
 DEFAULT_BITRATE = 250000  # J1939 typical bitrate (bit/s)
 DEFAULT_BUSLOAD = 0.05    # max 5 % of bus capacity
 
+# CAN frame overhead: SOF + arbitration + control + CRC + EOF + IFS (bits)
+CAN_FRAME_OVERHEAD_BITS = 47
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -169,8 +172,8 @@ def _inter_probe_delay(bitrate, busload, tx_dlc, rx_dlc, sniff_time):
     """
     if bitrate <= 0 or busload <= 0:
         return 0.0
-    tx_bits = 47 + 8 * tx_dlc
-    rx_bits = 47 + 8 * rx_dlc
+    tx_bits = CAN_FRAME_OVERHEAD_BITS + 8 * tx_dlc
+    rx_bits = CAN_FRAME_OVERHEAD_BITS + 8 * rx_dlc
     total_bits = tx_bits + rx_bits
     # Time the bus needs at *busload* fraction to "pay" for those bits
     required = total_bits / (bitrate * busload)
