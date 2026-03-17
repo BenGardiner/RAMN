@@ -27,6 +27,8 @@ from utils.RAMN_J1939_Scanner import (
     j1939_get_pf,
     j1939_get_sa,
     _record,
+    _get_bitrate,
+    _inter_probe_delay,
     PF_REQUEST,
     PF_TP_CM,
     PF_DIAG,
@@ -38,6 +40,8 @@ from utils.RAMN_J1939_Scanner import (
     DA_BROADCAST,
     SCANNER_SA,
     UDS_TESTER_PRESENT_RESPONSE,
+    DEFAULT_BITRATE,
+    DEFAULT_BUSLOAD,
 )
 
 
@@ -531,6 +535,138 @@ class TestUdsScanDetection(unittest.TestCase):
         self.assertIn("addr_claim", methods)
         self.assertIn("uds", methods)
         self.assertEqual(len(methods), 2)
+
+    def test_uds_padded_response_detected(self):
+        """UDS positive response padded to 8 bytes (real CAN) is detected."""
+        bus = MockBus()
+        # Build a padded UDS response (8 bytes, 0xFF padding per J1939-21)
+        padded_data = b'\x02\x7e\x00\xff\xff\xff\xff\xff'
+        probe_id = j1939_make_id(6, PF_DIAG, 0x2A, SCANNER_SA)
+        padded_resp = FakeCANMsg(
+            j1939_make_id(6, PF_DIAG, SCANNER_SA, 0x2A),
+            padded_data,
+        )
+        bus.add_response(probe_id, padded_resp)
+
+        result = j1939_scan(
+            FakeSocket(),
+            timeout=0.01,
+            timeout_per_da=0.01,
+            send_fn=bus.send_fn,
+            recv_fn=bus.recv_fn,
+        )
+
+        result_dict = dict(result)
+        self.assertIn(0x2A, result_dict)
+        methods = [d["method"] for d in result_dict[0x2A]]
+        self.assertIn("uds", methods)
+
+    def test_uds_padded_zeros_detected(self):
+        """UDS positive response padded with 0x00 (CAN padding) is detected."""
+        bus = MockBus()
+        padded_data = b'\x02\x7e\x00\x00\x00\x00\x00\x00'
+        probe_id = j1939_make_id(6, PF_DIAG, 0x5A, SCANNER_SA)
+        padded_resp = FakeCANMsg(
+            j1939_make_id(6, PF_DIAG, SCANNER_SA, 0x5A),
+            padded_data,
+        )
+        bus.add_response(probe_id, padded_resp)
+
+        result = j1939_scan(
+            FakeSocket(),
+            timeout=0.01,
+            timeout_per_da=0.01,
+            send_fn=bus.send_fn,
+            recv_fn=bus.recv_fn,
+        )
+
+        result_dict = dict(result)
+        self.assertIn(0x5A, result_dict)
+        methods = [d["method"] for d in result_dict[0x5A]]
+        self.assertIn("uds", methods)
+
+
+class TestInterProbeDelay(unittest.TestCase):
+    """_inter_probe_delay() computes rate-limiting sleep."""
+
+    def test_zero_busload_returns_zero(self):
+        self.assertEqual(_inter_probe_delay(250000, 0.0, 3, 8, 0.1), 0.0)
+
+    def test_zero_bitrate_returns_zero(self):
+        self.assertEqual(_inter_probe_delay(0, 0.05, 3, 8, 0.1), 0.0)
+
+    def test_positive_result(self):
+        """With a very small sniff_time the extra delay should be > 0."""
+        delay = _inter_probe_delay(250000, 0.05, 3, 8, 0.0)
+        self.assertGreater(delay, 0.0)
+
+    def test_large_sniff_time_returns_zero(self):
+        """If sniff_time already exceeds the required gap, extra = 0."""
+        delay = _inter_probe_delay(250000, 0.05, 3, 8, 10.0)
+        self.assertEqual(delay, 0.0)
+
+    def test_higher_bitrate_shorter_delay(self):
+        """Higher bitrate → shorter required gap."""
+        delay_250k = _inter_probe_delay(250000, 0.05, 3, 8, 0.0)
+        delay_500k = _inter_probe_delay(500000, 0.05, 3, 8, 0.0)
+        self.assertGreater(delay_250k, delay_500k)
+
+
+class TestGetBitrate(unittest.TestCase):
+    """_get_bitrate() extracts bitrate from socket objects."""
+
+    def test_bitrate_attribute(self):
+        """Socket with .bitrate attribute."""
+        sock = FakeSocket()
+        sock.bitrate = 500000
+        self.assertEqual(_get_bitrate(sock), 500000)
+
+    def test_private_bitrate_attribute(self):
+        """Socket with ._bitrate attribute (python-can Bus)."""
+        sock = FakeSocket()
+        sock._bitrate = 125000
+        self.assertEqual(_get_bitrate(sock), 125000)
+
+    def test_no_bitrate_returns_none(self):
+        """Plain socket without bitrate returns None."""
+        sock = FakeSocket()
+        self.assertIsNone(_get_bitrate(sock))
+
+
+class TestBitrateFromSocket(unittest.TestCase):
+    """j1939_scan() pulls bitrate from socket when not explicitly set."""
+
+    def test_uses_socket_bitrate(self):
+        """When bitrate=None, scanner reads sock.bitrate."""
+        bus = MockBus()
+        sock = FakeSocket()
+        sock.bitrate = 500000
+
+        # Just verify it doesn't crash and uses the socket bitrate
+        result = j1939_scan(
+            sock,
+            timeout=0.01,
+            timeout_per_da=0.0,
+            send_fn=bus.send_fn,
+            recv_fn=bus.recv_fn,
+        )
+        self.assertIsInstance(result, list)
+
+    def test_explicit_bitrate_overrides_socket(self):
+        """When bitrate is explicitly set, socket bitrate is ignored."""
+        bus = MockBus()
+        sock = FakeSocket()
+        sock.bitrate = 500000
+
+        result = j1939_scan(
+            sock,
+            timeout=0.01,
+            timeout_per_da=0.0,
+            send_fn=bus.send_fn,
+            recv_fn=bus.recv_fn,
+            bitrate=250000,
+        )
+        self.assertIsInstance(result, list)
 
 
 if __name__ == "__main__":

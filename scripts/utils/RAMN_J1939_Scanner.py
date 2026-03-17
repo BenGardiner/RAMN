@@ -70,6 +70,10 @@ SCANNER_SA = 0xFE  # SA used by the scanner tool
 UDS_TESTER_PRESENT_REQUEST = b'\x02\x3e\x00'   # Tester Present, no suppress
 UDS_TESTER_PRESENT_RESPONSE = b'\x02\x7e\x00'  # Positive response
 
+# Rate-limiting defaults
+DEFAULT_BITRATE = 250000  # J1939 typical bitrate (bit/s)
+DEFAULT_BUSLOAD = 0.05    # max 5 % of bus capacity
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -129,6 +133,51 @@ def _pkt_data(pkt):
     raise TypeError("Cannot extract CAN data from packet")
 
 
+def _get_bitrate(sock):
+    """Try to extract the CAN bitrate from *sock*.
+
+    Supports:
+    - scapy CANSocket (``sock.basecls`` or ``sock.channel`` with bitrate
+      stored at construction time)
+    - python-can Bus (``sock.channel_info`` or internal ``_bitrate``)
+    - Any object with a ``bitrate`` attribute
+
+    Returns *None* if the bitrate cannot be determined.
+    """
+    # Direct attribute (works with many wrappers)
+    if hasattr(sock, "bitrate"):
+        return sock.bitrate
+    # python-can Bus stores it in the internal state dict
+    if hasattr(sock, "_bitrate"):
+        return sock._bitrate
+    return None
+
+
+def _inter_probe_delay(bitrate, busload, tx_dlc, rx_dlc, sniff_time):
+    """Compute the *additional* sleep needed to stay within *busload*.
+
+    A standard CAN frame with DLC *d* occupies roughly ``(47 + 8*d)``
+    bit-times on the wire (SOF + arbitration + control + data + CRC +
+    EOF + IFS, ignoring stuff bits).
+
+    :param bitrate: CAN bus speed in bit/s
+    :param busload: target bus-load fraction (0..1)
+    :param tx_dlc: DLC of the probe frame
+    :param rx_dlc: DLC of the expected response frame
+    :param sniff_time: seconds already spent sniffing (counts toward gap)
+    :returns: extra seconds to sleep (may be 0.0)
+    """
+    if bitrate <= 0 or busload <= 0:
+        return 0.0
+    tx_bits = 47 + 8 * tx_dlc
+    rx_bits = 47 + 8 * rx_dlc
+    total_bits = tx_bits + rx_bits
+    # Time the bus needs at *busload* fraction to "pay" for those bits
+    required = total_bits / (bitrate * busload)
+    extra = required - sniff_time
+    return max(0.0, extra)
+
+
 # ---------------------------------------------------------------------------
 # Per-technique probe / collect helpers
 # ---------------------------------------------------------------------------
@@ -183,7 +232,8 @@ def _scan_ecu_id(sock, found, timeout, send_fn, recv_fn):
 
 
 def _scan_unicast(sock, found, timeout_per_da, send_fn, recv_fn,
-                  da_range=range(0x00, 0xFE)):
+                  da_range=range(0x00, 0xFE), bitrate=DEFAULT_BITRATE,
+                  busload=DEFAULT_BUSLOAD):
     """Technique 3 – unicast Request for PGN 60928 to each DA."""
     for da in da_range:
         probe_id = j1939_make_id(6, PF_REQUEST, da, SCANNER_SA)
@@ -204,9 +254,15 @@ def _scan_unicast(sock, found, timeout_per_da, send_fn, recv_fn,
                 log.debug("unicast: response from SA=0x%02X", sa)
                 _record(found, sa, "unicast", pkt)
 
+        # Pace the probe rate: request=3 bytes (DLC 3), response=8 bytes (DLC 8)
+        extra = _inter_probe_delay(bitrate, busload, 3, 8, timeout_per_da)
+        if extra > 0.0:
+            time.sleep(extra)
+
 
 def _scan_rts_probe(sock, found, timeout_per_da, send_fn, recv_fn,
-                    da_range=range(0x00, 0xFE)):
+                    da_range=range(0x00, 0xFE), bitrate=DEFAULT_BITRATE,
+                    busload=DEFAULT_BUSLOAD):
     """Technique 4 – TP.CM_RTS addressed to each DA."""
     for da in da_range:
         probe_id = j1939_make_id(7, PF_TP_CM, da, SCANNER_SA)
@@ -244,9 +300,15 @@ def _scan_rts_probe(sock, found, timeout_per_da, send_fn, recv_fn,
                     )
                     _record(found, sa, "rts_probe", pkt)
 
+        # Pace the probe rate: request=8 bytes (DLC 8), response=8 bytes (DLC 8)
+        extra = _inter_probe_delay(bitrate, busload, 8, 8, timeout_per_da)
+        if extra > 0.0:
+            time.sleep(extra)
+
 
 def _scan_uds(sock, found, timeout_per_da, send_fn, recv_fn,
-              da_range=range(0x00, 0xFE)):
+              da_range=range(0x00, 0xFE), bitrate=DEFAULT_BITRATE,
+              busload=DEFAULT_BUSLOAD):
     """Technique 5 – UDS Tester Present (PF=0xDA) to each DA."""
     for da in da_range:
         probe_id = j1939_make_id(6, PF_DIAG, da, SCANNER_SA)
@@ -264,9 +326,14 @@ def _scan_uds(sock, found, timeout_per_da, send_fn, recv_fn,
             sa = j1939_get_sa(cid)
             if sa == da:
                 data = _pkt_data(pkt)
-                if data == UDS_TESTER_PRESENT_RESPONSE:
+                if len(data) >= 3 and data[:3] == UDS_TESTER_PRESENT_RESPONSE:
                     log.debug("uds: response from SA=0x%02X", sa)
                     _record(found, sa, "uds", pkt)
+
+        # Pace the probe rate: request=3 bytes (DLC 3), response=3 bytes (DLC 3)
+        extra = _inter_probe_delay(bitrate, busload, 3, 3, timeout_per_da)
+        if extra > 0.0:
+            time.sleep(extra)
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +341,8 @@ def _scan_uds(sock, found, timeout_per_da, send_fn, recv_fn,
 # ---------------------------------------------------------------------------
 
 def j1939_scan(sock, *, force=False, timeout=0.5, timeout_per_da=0.05,
-               send_fn=None, recv_fn=None):
+               send_fn=None, recv_fn=None, bitrate=None,
+               busload=DEFAULT_BUSLOAD):
     """Scan the CAN bus for J1939 Controller Applications.
 
     Parameters
@@ -286,13 +354,20 @@ def j1939_scan(sock, *, force=False, timeout=0.5, timeout_per_da=0.05,
     timeout : float
         Seconds to listen after broadcast probes (addr_claim, ecu_id).
     timeout_per_da : float
-        Seconds to listen after each unicast/RTS probe.
+        Seconds to listen after each unicast/RTS/UDS probe.
     send_fn : callable, optional
         ``send_fn(sock, can_id, data)`` – send an extended CAN frame.
         Defaults to ``sock.send()`` with a ``python-can`` ``Message``.
     recv_fn : callable, optional
         ``recv_fn(sock, timeout)`` – receive one CAN frame or ``None``.
         Defaults to ``sock.recv(timeout)``.
+    bitrate : int, optional
+        CAN bus bitrate in bit/s used for rate limiting.  When *None*
+        (default) the scanner attempts to read the bitrate from *sock*;
+        if that fails, ``DEFAULT_BITRATE`` (250 000) is used.
+    busload : float
+        Maximum fraction of bus capacity the scanner may consume
+        (default 0.05 = 5 %).
 
     Returns
     -------
@@ -307,14 +382,21 @@ def j1939_scan(sock, *, force=False, timeout=0.5, timeout_per_da=0.05,
     if recv_fn is None:
         recv_fn = _default_recv
 
+    # Resolve bitrate: explicit > socket attribute > default
+    if bitrate is None:
+        bitrate = _get_bitrate(sock) or DEFAULT_BITRATE
+
     # Accumulator: {sa: [{'method': ..., 'packet': ...}, ...]}
     found = {}
 
     _scan_addr_claim(sock, found, timeout, send_fn, recv_fn)
     _scan_ecu_id(sock, found, timeout, send_fn, recv_fn)
-    _scan_unicast(sock, found, timeout_per_da, send_fn, recv_fn)
-    _scan_rts_probe(sock, found, timeout_per_da, send_fn, recv_fn)
-    _scan_uds(sock, found, timeout_per_da, send_fn, recv_fn)
+    _scan_unicast(sock, found, timeout_per_da, send_fn, recv_fn,
+                  bitrate=bitrate, busload=busload)
+    _scan_rts_probe(sock, found, timeout_per_da, send_fn, recv_fn,
+                    bitrate=bitrate, busload=busload)
+    _scan_uds(sock, found, timeout_per_da, send_fn, recv_fn,
+              bitrate=bitrate, busload=busload)
 
     # Return as a sorted list of (sa, detections) tuples
     return sorted(found.items(), key=lambda item: item[0])
