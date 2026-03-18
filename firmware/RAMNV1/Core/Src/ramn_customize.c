@@ -18,6 +18,7 @@
 #include "ramn_canfd.h"
 #include "ramn_sensors.h"
 #include "ramn_dbc.h"
+#include "ramn_dtc.h"
 
 #ifdef ENABLE_CDC
 #include "ramn_cdc.h"
@@ -149,14 +150,155 @@ static void J1939_SendTPConnAbort(uint8_t da, uint32_t pgn)
 
 	J1939_InitTxHeader(&header, J1939_MakeId(7, J1939_PF_TP_CM, da, J1939_ECU_SA));
 	payload[0] = J1939_TP_CM_ABORT;
-	payload[1] = 0x01U;                               /* reason: already in session */
-	payload[2] = 0xFFU;
-	payload[3] = 0xFFU;
-	payload[4] = 0xFFU;
+	payload[1] = 0xFF;
+	payload[2] = 0xFF;
+	payload[3] = 0xFF;
+	payload[4] = 0xFF;
 	payload[5] = (uint8_t)(pgn & 0xFFU);
 	payload[6] = (uint8_t)((pgn >> 8) & 0xFFU);
 	payload[7] = (uint8_t)((pgn >> 16) & 0xFFU);
 	RAMN_FDCAN_SendMessage(&header, payload);
+}
+
+static void Pack_J1939_DTC(uint32_t uds_dtc, uint8_t* payload_ptr)
+{
+	uint32_t spn = 0;
+	uint8_t fmi = 31;
+	uint8_t oc = 1; // Hardcoded occurrence count
+
+	uint16_t fault_code = (uds_dtc >> 16) & 0x3FFF;
+	uint8_t category = (uds_dtc >> 30) & 0x03;
+
+	if (category == 3 && fault_code == 0x0029) {
+		// Bus A Performance (U0029)
+		spn = 639; // J1939 Network #1
+		fmi = 9;   // Abnormal update rate
+	} else if (category == 1 && fault_code == 0x0563) {
+		// Calibration ROM Checksum Error (C0563)
+		spn = 628; // Program Memory
+		fmi = 13;  // Out of Calibration
+	} else if (category == 0 && fault_code == 0x0172) {
+		// System too Rich (P0172)
+		spn = 3055; // Engine Fuel System 1
+		fmi = 0;    // Data valid but above normal
+	} else if (category == 2 && fault_code == 0x0091) {
+		// Active switch wrong state (B0091)
+		spn = 2872; // Generic Switch
+		fmi = 2;    // Data erratic, intermittent or incorrect
+	} else {
+		// Generic fallback
+		spn = fault_code;
+		fmi = 31;   // Condition exists
+	}
+
+	payload_ptr[0] = (uint8_t)(spn & 0xFF);
+	payload_ptr[1] = (uint8_t)((spn >> 8) & 0xFF);
+	payload_ptr[2] = (uint8_t)(((spn >> 16) & 0x07) << 5) | (fmi & 0x1F);
+	payload_ptr[3] = (oc & 0x7F); // CM bit 7 = 0
+}
+
+static void J1939_SendNACK(uint8_t da, uint32_t pgn)
+{
+	FDCAN_TxHeaderTypeDef header;
+	uint8_t payload[8];
+
+	J1939_InitTxHeader(&header, J1939_MakeId(6, J1939_PF_ACK, da, J1939_ECU_SA));
+	payload[0] = J1939_ACK_CONTROL_NACK;
+	payload[1] = 0xFF; // Group Function Value
+	payload[2] = 0xFF;
+	payload[3] = 0xFF;
+	payload[4] = 0xFF;
+	payload[5] = (uint8_t)(pgn & 0xFFU);
+	payload[6] = (uint8_t)((pgn >> 8) & 0xFFU);
+	payload[7] = (uint8_t)((pgn >> 16) & 0xFFU);
+	RAMN_FDCAN_SendMessage(&header, payload);
+}
+
+static void J1939_SendDM1(void)
+{
+	uint32_t numDTC = 0;
+#ifdef ENABLE_EEPROM_EMULATION
+	RAMN_DTC_GetNumberOfDTC(&numDTC);
+#endif
+
+	uint8_t mil = (RAMN_DBC_Handle.control_lights & 0x02) ? 1 : 0;
+	uint8_t byte0 = (mil << 6) | 0x3F;
+	uint8_t byte1 = 0xFF;
+
+	if (numDTC <= 1)
+	{
+		FDCAN_TxHeaderTypeDef header;
+		J1939_InitTxHeader(&header, J1939_MakeId(6, (J1939_PGN_DM1 >> 8) & 0xFF, J1939_PGN_DM1 & 0xFF, J1939_ECU_SA));
+
+		uint8_t payload[8];
+		RAMN_memset(payload, 0xFF, 8);
+		payload[0] = byte0;
+		payload[1] = byte1;
+
+		if (numDTC == 1)
+		{
+			uint32_t dtc_val = 0;
+#ifdef ENABLE_EEPROM_EMULATION
+			RAMN_DTC_GetIndex(0, &dtc_val);
+#endif
+			Pack_J1939_DTC(dtc_val, &payload[2]);
+		}
+		else
+		{
+			payload[2] = 0x00;
+			payload[3] = 0x00;
+			payload[4] = 0x00;
+			payload[5] = 0x00;
+		}
+		RAMN_FDCAN_SendMessage(&header, payload);
+	}
+	else
+	{
+		uint16_t totalSize = 2 + (numDTC * 4);
+		uint8_t  numPackets = (uint8_t)((totalSize + 6U) / 7U);
+		FDCAN_TxHeaderTypeDef header;
+		uint8_t payload[8];
+
+		J1939_InitTxHeader(&header, J1939_MakeId(7, J1939_PF_TP_CM, 0xFF, J1939_ECU_SA));
+		payload[0] = J1939_TP_CM_BAM;
+		payload[1] = (uint8_t)(totalSize & 0xFFU);
+		payload[2] = (uint8_t)((totalSize >> 8) & 0xFFU);
+		payload[3] = numPackets;
+		payload[4] = 0xFFU;
+		payload[5] = (uint8_t)(J1939_PGN_DM1 & 0xFFU);
+		payload[6] = (uint8_t)((J1939_PGN_DM1 >> 8) & 0xFFU);
+		payload[7] = (uint8_t)((J1939_PGN_DM1 >> 16) & 0xFFU);
+		RAMN_FDCAN_SendMessage(&header, payload);
+
+		header.Identifier = J1939_MakeId(7, J1939_PF_TP_DT, 0xFF, J1939_ECU_SA);
+		for (uint8_t seq = 1; seq <= numPackets; seq++)
+		{
+			RAMN_memset(payload, 0xFF, 8U);
+			payload[0] = seq;
+			uint16_t offset = (uint16_t)((seq - 1U) * 7U);
+			for (uint8_t j = 0; j < 7U && (offset + j) < totalSize; j++)
+			{
+				uint8_t byte_val = 0xFF;
+				uint16_t idx = offset + j;
+				if (idx == 0) byte_val = byte0;
+				else if (idx == 1) byte_val = byte1;
+				else
+				{
+					uint32_t dtc_idx = (idx - 2) / 4;
+					uint32_t dtc_byte = (idx - 2) % 4;
+					uint32_t dtc_val = 0;
+#ifdef ENABLE_EEPROM_EMULATION
+					RAMN_DTC_GetIndex(dtc_idx, &dtc_val);
+#endif
+					uint8_t dtc_packed[4];
+					Pack_J1939_DTC(dtc_val, dtc_packed);
+					byte_val = dtc_packed[dtc_byte];
+				}
+				payload[1U + j] = byte_val;
+			}
+			RAMN_FDCAN_SendMessage(&header, payload);
+		}
+	}
 }
 
 #endif /* ENABLE_J1939_MODE */
@@ -207,6 +349,15 @@ void	RAMN_CUSTOM_ProcessRxCANMessage(const FDCAN_RxHeaderTypeDef* pHeader, const
 				else if (reqPGN == J1939_PGN_ECU_ID)
 				{
 					J1939_SendEcuIdBAM();
+				}
+				else if (reqPGN == J1939_PGN_DM1)
+				{
+					J1939_SendDM1();
+				}
+				else if (ps_da == J1939_ECU_SA)
+				{
+					// For any unsupported PGN request directed specifically to us, send a NACK
+					J1939_SendNACK(J1939_GetSA(canId), reqPGN);
 				}
 			}
 		}

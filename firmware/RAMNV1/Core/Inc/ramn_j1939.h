@@ -7,6 +7,11 @@
 #define J1939_PGN_EBS1              512     /* Electronic Brake System 1 */
 #define J1939_PGN_XBR               1024    /* External Brake Request */
 #define J1939_PGN_REQUEST           59904   /* Request PGN (0xEA00) */
+#define J1939_PGN_ACK               59392   /* Acknowledgment PGN (0xE800) */
+#define J1939_ACK_CONTROL_ACK       0
+#define J1939_ACK_CONTROL_NACK      1
+#define J1939_ACK_CONTROL_DENIED    2
+#define J1939_ACK_CONTROL_BUSY      3
 #define J1939_PGN_TP_DT             60160   /* TP Data Transfer (0xEB00) */
 #define J1939_PGN_TP_CM             60416   /* TP Connection Management (0xEC00) */
 #define J1939_PGN_ADDRESS_CLAIMED   60928   /* Address Claimed (0xEE00) */
@@ -30,6 +35,7 @@
 #define J1939_PGN_PROPB_65282       65282   /* Proprietary B 65282 (Joystick_Buttons) */
 
 /* J1939 PDU Format (PF) values */
+#define J1939_PF_ACK                0xE8    /* 232 - Acknowledgment PGN */
 #define J1939_PF_REQUEST            0xEA    /* 234 - Request PGN */
 #define J1939_PF_TP_DT              0xEB    /* 235 - TP Data Transfer */
 #define J1939_PF_TP_CM              0xEC    /* 236 - TP Connection Management */

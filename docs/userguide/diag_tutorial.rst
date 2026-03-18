@@ -985,3 +985,30 @@ You can read these PIDs with the following commands:
 
 Note that if you have not written a VIN to the ECU, the answer will be only zeroes.
 
+.. _j1939_dm1:
+
+J1939 Active Diagnostic Trouble Codes (DM1)
+-------------------------------------------
+
+When RAMN is operating in J1939 mode, it supports the J1939 DM1 (Active Diagnostic Trouble Codes) message.
+A DM1 message requests an ECU to broadcast its currently active diagnostic trouble codes. The message is transmitted on PGN 65226 (0xFECA).
+
+While UDS represents DTCs as a 3-byte code plus a status byte, J1939 represents faults using a different structure consisting of:
+
+- **SPN** (Suspect Parameter Number): A 19-bit identifier defining the faulty component or system.
+- **FMI** (Failure Mode Indicator): A 5-bit identifier defining the nature of the fault (e.g., short circuit, erratic data).
+- **OC** (Occurrence Count): A 7-bit counter indicating how many times the fault has occurred.
+
+Because RAMN stores its DTCs internally using the UDS representation (to remain compatible with its UDS features), the firmware implements a translation layer to map these internal UDS codes to their closest J1939 SPN and FMI equivalents when a DM1 message is requested. The Occurrence Count (OC) is currently hardcoded to 1.
+
+The translation maps the default RAMN UDS codes as follows:
+
+- **ECUA** (U0029 - "Bus A Performance"): Maps to **SPN 639** (J1939 Network #1, Primary Vehicle Network) and **FMI 9** (Abnormal update rate).
+- **ECUB** (C0563 - "Calibration ROM Checksum Error"): Maps to **SPN 628** (Program Memory) and **FMI 13** (Out of Calibration).
+- **ECUC** (P0172 - "System too Rich"): Maps to **SPN 3055** (Engine Fuel System 1) and **FMI 0** (Data valid but above normal).
+- **ECUD** (B0091 - "Active switch wrong state"): Maps to **SPN 2872** (Generic Switch) and **FMI 2** (Data erratic, intermittent or incorrect).
+
+Any other dynamically injected UDS code will use a generic fallback where its underlying numeric fault code directly becomes the SPN, and the FMI is set to 31 ("Condition exists").
+
+When a single fault is present, the DM1 response is sent as a standard 8-byte J1939 frame. If an ECU has multiple active DTCs, the DM1 response dynamically expands beyond 8 bytes and is transmitted over J1939 Transport Protocol using a Broadcast Announce Message (BAM) sequence.
+
