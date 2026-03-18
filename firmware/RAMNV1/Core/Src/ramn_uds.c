@@ -1845,8 +1845,21 @@ RAMN_Bool_t RAMN_UDS_ProcessRxCANMessage(const FDCAN_RxHeaderTypeDef* pHeader, c
 	uint8_t functionalAddressing = 0U;
 	RAMN_Bool_t result = False;
 	uint16_t requestSize = 0;
+#ifdef ENABLE_J1939_MODE
+	uint8_t pf = (pHeader->Identifier >> 16) & 0xFF;
+	uint8_t da = (pHeader->Identifier >> 8) & 0xFF;
+	uint8_t sa = pHeader->Identifier & 0xFF;
+	if (pHeader->IdType == FDCAN_EXTENDED_ID && pf == 0xDA && da == J1939_ECU_SA)
+#else
 	if (pHeader->Identifier == UDS_RX_CANID)
+#endif
 	{
+#ifdef ENABLE_J1939_MODE
+		udsMsgHeader.Identifier = J1939_UCAST_ID(6, 0xDA00, sa, J1939_ECU_SA);
+		udsMsgHeader.IdType = FDCAN_EXTENDED_ID;
+		udsFCMsgHeader.Identifier = udsMsgHeader.Identifier;
+		udsFCMsgHeader.IdType = FDCAN_EXTENDED_ID;
+#endif
 		RAMN_ISOTP_ProcessRxMsg(&RAMN_UDS_ISOTPHandler,DLCtoUINT8(pHeader->DataLength),data, tick);
 
 		// If a ISO-TP has been received, copy it to buffer
@@ -1862,7 +1875,11 @@ RAMN_Bool_t RAMN_UDS_ProcessRxCANMessage(const FDCAN_RxHeaderTypeDef* pHeader, c
 		}
 	}
 #ifdef UDS_ACCEPT_FUNCTIONAL_ADDRESSING
+#ifdef ENABLE_J1939_MODE
+	else if (pHeader->IdType == FDCAN_EXTENDED_ID && pf == 0xDB && da == 0xFF)
+#else
 	else if(pHeader->Identifier == UDS_FUNCTIONAL_RX_CANID)
+#endif
 	{
 		if (DLCtoUINT8(pHeader->DataLength) > 0)
 		{

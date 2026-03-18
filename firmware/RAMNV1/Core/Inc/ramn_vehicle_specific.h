@@ -425,7 +425,9 @@ extern RAMN_PeriodicFDCANTx_t msg_control_accel;
 extern RAMN_PeriodicFDCANTx_t msg_control_shift;
 extern RAMN_PeriodicFDCANTx_t msg_command_horn;
 extern RAMN_PeriodicFDCANTx_t msg_command_turnindicator;
+#ifdef ENABLE_J1939_MODE
 extern RAMN_PeriodicFDCANTx_t msg_joystick_buttons;
+#endif
 #endif
 
 #if defined(TARGET_ECUD)

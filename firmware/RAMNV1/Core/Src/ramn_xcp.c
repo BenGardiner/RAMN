@@ -282,6 +282,28 @@ RAMN_Bool_t RAMN_XCP_ProcessRxCANMessage(const FDCAN_RxHeaderTypeDef* pHeader, c
 	uint16_t size;
 	RAMN_Bool_t result = False;
 
+#ifdef ENABLE_J1939_MODE
+	uint8_t pf = (pHeader->Identifier >> 16) & 0xFF;
+	uint8_t da = (pHeader->Identifier >> 8) & 0xFF;
+	uint8_t sa = pHeader->Identifier & 0xFF;
+
+	// PF 0xDE is Unicast, 0xDF is Functional
+	if (pHeader->IdType == FDCAN_EXTENDED_ID && (pf == 0xDE || pf == 0xDF) && (da == J1939_ECU_SA || da == 0xFF))
+	{
+		RAMN_XCP_TxMsgHeader.Identifier = J1939_UCAST_ID(6, 0xDE00, sa, J1939_ECU_SA);
+		RAMN_XCP_TxMsgHeader.IdType = FDCAN_EXTENDED_ID;
+
+		size = (uint16_t)DLCtoUINT8(pHeader->DataLength);
+		if (size > 0U)
+		{
+			// Got an XCP payload, should be forwarded to diag thread
+			xBytesSent = xStreamBufferSend(*strbuf, (void*) &(size), sizeof(size), portMAX_DELAY );
+			xBytesSent += xStreamBufferSend(*strbuf, (void*) data, size, portMAX_DELAY );
+			if(xBytesSent != (size + sizeof(size))) Error_Handler();
+			result = True;
+		}
+	}
+#else
 	if (pHeader->Identifier == XCP_RX_CANID)
 	{
 		size = (uint16_t)DLCtoUINT8(pHeader->DataLength);
@@ -294,6 +316,7 @@ RAMN_Bool_t RAMN_XCP_ProcessRxCANMessage(const FDCAN_RxHeaderTypeDef* pHeader, c
 			result = True;
 		}
 	}
+#endif
 	return result;
 }
 

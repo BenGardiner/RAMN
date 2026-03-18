@@ -172,18 +172,23 @@ static const uint16_t recvStdCANIDList[] =
 #endif
 #endif
 #ifdef ENABLE_UDS
+#ifndef ENABLE_J1939_MODE
 		UDS_RX_CANID,
 
 #ifdef UDS_ACCEPT_FUNCTIONAL_ADDRESSING
 		UDS_FUNCTIONAL_RX_CANID,
 #endif
-
+#endif
 #endif
 #ifdef ENABLE_KWP
+#ifndef ENABLE_J1939_MODE
 		KWP_RX_CANID,
 #endif
+#endif
 #ifdef ENABLE_XCP
+#ifndef ENABLE_J1939_MODE
 		XCP_RX_CANID,
+#endif
 #endif
 		RTR_DEMO_ID,
 

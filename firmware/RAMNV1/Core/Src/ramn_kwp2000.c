@@ -346,6 +346,32 @@ RAMN_Bool_t RAMN_KWP_ProcessRxCANMessage(const FDCAN_RxHeaderTypeDef* pHeader, c
 {
 	size_t xBytesSent;
 	RAMN_Bool_t result = False;
+#ifdef ENABLE_J1939_MODE
+	uint8_t pf = (pHeader->Identifier >> 16) & 0xFF;
+	uint8_t da = (pHeader->Identifier >> 8) & 0xFF;
+	uint8_t sa = pHeader->Identifier & 0xFF;
+
+	// PF 0xDC is Unicast, 0xDD is Functional
+	if (pHeader->IdType == FDCAN_EXTENDED_ID && (pf == 0xDC || pf == 0xDD) && (da == J1939_ECU_SA || da == 0xFF))
+	{
+		kwpMsgHeader.Identifier = J1939_UCAST_ID(6, 0xDC00, sa, J1939_ECU_SA);
+		kwpMsgHeader.IdType = FDCAN_EXTENDED_ID;
+		kwpFCMsgHeader.Identifier = kwpMsgHeader.Identifier;
+		kwpFCMsgHeader.IdType = FDCAN_EXTENDED_ID;
+
+		RAMN_ISOTP_ProcessRxMsg(&RAMN_KWP_ISOTPHandler,DLCtoUINT8(pHeader->DataLength),data, tick);
+
+		//If a ISO-TP has been received, copy it to buffer
+		if (RAMN_KWP_ISOTPHandler.rxStatus == ISOTP_RX_FINISHED)
+		{
+			xBytesSent = xStreamBufferSend(*strbuf, (void *) &(RAMN_KWP_ISOTPHandler.rxCount), sizeof(RAMN_KWP_ISOTPHandler.rxCount), portMAX_DELAY );
+			xBytesSent += xStreamBufferSend(*strbuf, (void *) RAMN_KWP_ISOTPHandler.rxData, RAMN_KWP_ISOTPHandler.rxCount, portMAX_DELAY );
+			if( xBytesSent != (RAMN_KWP_ISOTPHandler.rxCount + sizeof(RAMN_KWP_ISOTPHandler.rxCount) )) Error_Handler();
+			RAMN_KWP_ISOTPHandler.rxStatus = ISOTP_RX_IDLE;
+			result = True;
+		}
+	}
+#else
 	if (pHeader->Identifier == KWP_RX_CANID)
 	{
 		RAMN_ISOTP_ProcessRxMsg(&RAMN_KWP_ISOTPHandler,DLCtoUINT8(pHeader->DataLength),data, tick);
@@ -360,6 +386,7 @@ RAMN_Bool_t RAMN_KWP_ProcessRxCANMessage(const FDCAN_RxHeaderTypeDef* pHeader, c
 			result = True;
 		}
 	}
+#endif
 	return result;
 }
 
