@@ -254,6 +254,12 @@ RAMN_Bool_t RAMN_CDC_ProcessCLIBuffer(uint8_t* USBRxBuffer, uint32_t commandLeng
 						RAMN_USB_SendStringFromTask("    - play: Play a game on ECU A's LCD screen. Usage: play <game number>.\r");
 						RAMN_USB_SendStringFromTask("    - stop: Stop any ongoing game. Usage: stop.\r");
 #endif
+#ifdef ENABLE_BITBANG
+						RAMN_USB_SendStringFromTask("    - bb/bitbang: Bitbang CAN bus commands. Type 'bb help' for details.\r");
+#endif
+#if defined(ENABLE_SUMP_OLS) && defined(ENABLE_BITBANG)
+						RAMN_USB_SendStringFromTask("    - sump: Enter SUMP/OLS logic analyzer mode for PulseView. Send ESC (0x1B) to exit.\r");
+#endif
 						RAMN_USB_SendStringFromTask("\r");
 						RAMN_USB_SendStringFromTask("Commands are case sensitive.\r");
 						RAMN_USB_SendStringFromTask("-------------------------------------------------------------\r");
@@ -880,6 +886,11 @@ RAMN_Bool_t RAMN_CDC_ProcessCLIBuffer(uint8_t* USBRxBuffer, uint32_t commandLeng
 							}
 						}
 					}
+				}
+#endif
+#if defined(ENABLE_SUMP_OLS) && defined(ENABLE_BITBANG)
+				else if (strcmp(token, "sump") == 0) {
+					RAMN_SUMP_Enter();
 				}
 #endif
 #ifdef ENABLE_SCREEN

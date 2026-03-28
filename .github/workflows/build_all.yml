@@ -110,6 +110,10 @@ jobs:
           - variant: j1939_showcase_mode
             enable: "ENABLE_J1939_MODE RAMN_SHOWCASE_MODE"
             disable: ""
+          - ecu: TARGET_ECUA
+            variant: sump_ols
+            enable: "ENABLE_SUMP_OLS"
+            disable: ""
 
     runs-on: ubuntu-latest
     steps:

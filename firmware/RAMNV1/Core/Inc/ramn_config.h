@@ -129,6 +129,7 @@
 #endif
 
 #define ENABLE_BITBANG
+#define ENABLE_SUMP_OLS
 
 #endif
 
@@ -426,6 +427,14 @@
 
 #if defined(ENABLE_USB) && !defined(ENABLE_CDC) && !defined(ENABLE_GSUSB)
 #error At least one USB interface must be active if you enable USB
+#endif
+
+#if defined(ENABLE_SUMP_OLS) && !defined(ENABLE_BITBANG)
+#error ENABLE_SUMP_OLS requires ENABLE_BITBANG
+#endif
+
+#if defined(ENABLE_SUMP_OLS) && !defined(ENABLE_CDC)
+#error ENABLE_SUMP_OLS requires ENABLE_CDC
 #endif
 
 #ifdef HARDENING
