@@ -49,14 +49,24 @@ SUMP_META_END          = 0x00
 
 # Configuration from ramn_sump.h
 SUMP_SAMPLE_BUFFER_SIZE = 4096
+SUMP_SAMPLE_BUFFER_MASK = SUMP_SAMPLE_BUFFER_SIZE - 1
 SUMP_MAX_SAMPLE_RATE    = 1000000
-SUMP_NUM_PROBES         = 2
+SUMP_NUM_PROBES         = 3
 SUMP_EXIT_CHAR          = 0x1B
 SUMP_DEVICE_NAME        = "RAMN"
 
 # CAN pin mapping
 SUMP_PIN_TX_BIT = 0  # Channel 0: CAN TX (PB9)
 SUMP_PIN_RX_BIT = 1  # Channel 1: CAN RX (PB8)
+SUMP_PIN_TRIG_BIT = 2  # Channel 2: Trigger marker
+
+# Sample bit constants
+SUMP_BIT_TX   = 0x01
+SUMP_BIT_RX   = 0x02
+SUMP_BIT_TRIG = 0x04
+
+# Special value indicating no trigger recorded
+SUMP_NO_TRIGGER = 0xFFFFFFFF
 
 
 # ---- Mock SUMP State Machine ----
@@ -65,6 +75,7 @@ class MockSUMPDevice:
     """
     A pure-Python mock of the RAMN SUMP state machine for testing.
     Mirrors the logic in ramn_sump.c without hardware dependencies.
+    Uses a circular buffer with trigger position tracking.
     """
 
     STATE_IDLE    = 0
@@ -84,48 +95,92 @@ class MockSUMPDevice:
         self.cmd_buf_idx = 0
         self.output = bytearray()
         self.exited = False
-        # Pre-recorded sample buffer (simulates bitbang capture)
-        self.samples = bytearray()
-        self.sample_count = 0
+        # Circular sample buffer (simulates bitbang capture)
+        self.samples = bytearray(SUMP_SAMPLE_BUFFER_SIZE)
+        self.sample_count = 0       # Total samples written (linear counter)
+        self.write_index = 0        # Circular buffer write position
+        self.trigger_index = SUMP_NO_TRIGGER  # Linear index of trigger
 
     def record_sample(self, tx_high, rx_high):
-        """Record a TX+RX sample into the sample buffer (simulates bitbang capture)."""
-        if self.sample_count < SUMP_SAMPLE_BUFFER_SIZE:
-            sample = 0
-            if tx_high:
-                sample |= 0x01
-            if rx_high:
-                sample |= 0x02
-            if len(self.samples) <= self.sample_count:
-                self.samples.extend(bytearray(SUMP_SAMPLE_BUFFER_SIZE - len(self.samples)))
-            self.samples[self.sample_count] = sample
-            self.sample_count += 1
+        """Record a TX+RX sample into the circular sample buffer."""
+        sample = 0
+        if tx_high:
+            sample |= SUMP_BIT_TX
+        if rx_high:
+            sample |= SUMP_BIT_RX
+        self.samples[self.write_index] = sample
+        self.write_index = (self.write_index + 1) & SUMP_SAMPLE_BUFFER_MASK
+        self.sample_count += 1
+
+    def mark_trigger(self):
+        """Mark the current position as the trigger point.
+        Sets the TRIG bit on the most recently written sample."""
+        self.trigger_index = self.sample_count
+        prev = (self.write_index - 1) & SUMP_SAMPLE_BUFFER_MASK
+        self.samples[prev] |= SUMP_BIT_TRIG
 
     def reset_capture(self):
         """Reset the sample buffer before a new bitbang operation."""
         self.sample_count = 0
+        self.write_index = 0
+        self.trigger_index = SUMP_NO_TRIGGER
 
     def send_captured_samples(self):
-        """Send pre-recorded samples (newest-to-oldest) as SUMP RUN response."""
-        available = self.sample_count
+        """Send pre-recorded samples windowed around the trigger point."""
+        total_written = self.sample_count
+        trig_idx = self.trigger_index
+
+        available = min(total_written, SUMP_SAMPLE_BUFFER_SIZE)
+
         read_count = self.read_count
         if read_count > SUMP_SAMPLE_BUFFER_SIZE:
             read_count = SUMP_SAMPLE_BUFFER_SIZE
         if read_count == 0:
             read_count = SUMP_SAMPLE_BUFFER_SIZE
-        if read_count > available:
-            read_count = available
-        if read_count == 0:
-            # No samples: send all-recessive
-            rc = self.read_count if self.read_count <= SUMP_SAMPLE_BUFFER_SIZE else SUMP_SAMPLE_BUFFER_SIZE
-            for _ in range(rc):
-                self.output.extend(bytes([0x03, 0, 0, 0]))
+
+        if available == 0:
+            # No samples: send all-recessive (TX+RX high, no trigger)
+            for _ in range(read_count):
+                self.output.extend(bytes([SUMP_BIT_TX | SUMP_BIT_RX, 0, 0, 0]))
             return
-        idx = available
-        for _ in range(read_count):
+
+        delay_count = self.delay_count
+        if delay_count > read_count:
+            delay_count = read_count
+
+        if trig_idx != SUMP_NO_TRIGGER and trig_idx <= total_written:
+            end_linear = trig_idx + delay_count
+            if end_linear > total_written:
+                end_linear = total_written
+            start_linear = (end_linear - read_count) if end_linear > read_count else 0
+        else:
+            end_linear = total_written
+            start_linear = (total_written - read_count) if total_written > read_count else 0
+
+        # Don't read overwritten samples
+        if total_written > SUMP_SAMPLE_BUFFER_SIZE:
+            oldest_available = total_written - SUMP_SAMPLE_BUFFER_SIZE
+            if start_linear < oldest_available:
+                start_linear = oldest_available
+
+        send_count = end_linear - start_linear
+        if send_count > read_count:
+            send_count = read_count
+
+        # Send newest-to-oldest
+        idx = end_linear
+        sent = 0
+        while sent < send_count and idx > start_linear:
             idx -= 1
-            s = self.samples[idx]
+            circ_idx = idx & SUMP_SAMPLE_BUFFER_MASK
+            s = self.samples[circ_idx]
             self.output.extend(bytes([s, 0, 0, 0]))
+            sent += 1
+
+        # Pad with idle samples if needed
+        while sent < read_count:
+            self.output.extend(bytes([SUMP_BIT_TX | SUMP_BIT_RX, 0, 0, 0]))
+            sent += 1
 
     @staticmethod
     def is_sump_probe(buffer, length):
@@ -270,13 +325,15 @@ def encode_sump_trigger(stage, mask, value):
     return mask_bytes + val_bytes
 
 
-def make_sample(tx_high, rx_high):
+def make_sample(tx_high, rx_high, trig=False):
     """Create a sample byte matching the RAMN pin mapping."""
     sample = 0
     if tx_high:
         sample |= (1 << SUMP_PIN_TX_BIT)
     if rx_high:
         sample |= (1 << SUMP_PIN_RX_BIT)
+    if trig:
+        sample |= (1 << SUMP_PIN_TRIG_BIT)
     return sample
 
 
@@ -339,10 +396,15 @@ class TestSUMPConstants(unittest.TestCase):
 
     def test_device_configuration(self):
         self.assertEqual(SUMP_SAMPLE_BUFFER_SIZE, 4096)
+        self.assertEqual(SUMP_SAMPLE_BUFFER_MASK, 4095)
         self.assertEqual(SUMP_MAX_SAMPLE_RATE, 1000000)
-        self.assertEqual(SUMP_NUM_PROBES, 2)
+        self.assertEqual(SUMP_NUM_PROBES, 3)
         self.assertEqual(SUMP_EXIT_CHAR, 0x1B)
         self.assertEqual(SUMP_DEVICE_NAME, "RAMN")
+        self.assertEqual(SUMP_BIT_TX, 0x01)
+        self.assertEqual(SUMP_BIT_RX, 0x02)
+        self.assertEqual(SUMP_BIT_TRIG, 0x04)
+        self.assertEqual(SUMP_NO_TRIGGER, 0xFFFFFFFF)
 
 
 class TestSUMPIDResponse(unittest.TestCase):
@@ -679,11 +741,17 @@ class TestSUMPSampleFormat(unittest.TestCase):
                 self.assertGreaterEqual(sample, 0x00)
 
     def test_sample_uses_only_2_bits(self):
-        """Only bits 0 and 1 should ever be set."""
+        """Only bits 0 and 1 should ever be set for normal samples (no trigger)."""
         for tx in [False, True]:
             for rx in [False, True]:
                 sample = make_sample(tx, rx)
-                self.assertEqual(sample & 0xFC, 0, "Only bits 0-1 should be used")
+                self.assertEqual(sample & 0xF8, 0, "Only bits 0-2 should be used")
+
+    def test_trigger_bit_is_bit2(self):
+        """The trigger marker uses bit 2 (0x04)."""
+        sample = make_sample(True, True, trig=True)
+        self.assertEqual(sample & SUMP_BIT_TRIG, SUMP_BIT_TRIG)
+        self.assertEqual(sample, 0x07)  # TX + RX + TRIG
 
     def test_sump_4byte_sample_format(self):
         """SUMP sends each sample as 4 bytes: [sample, 0, 0, 0]."""
@@ -694,6 +762,15 @@ class TestSUMPSampleFormat(unittest.TestCase):
         self.assertEqual(sump_bytes[1], 0)
         self.assertEqual(sump_bytes[2], 0)
         self.assertEqual(sump_bytes[3], 0)
+
+    def test_3_channel_sample(self):
+        """3-channel samples: TX(bit0) + RX(bit1) + TRIG(bit2)."""
+        # All channels on
+        s = make_sample(True, True, True)
+        self.assertEqual(s, 0x07)
+        # Only trigger
+        s = make_sample(False, False, True)
+        self.assertEqual(s, 0x04)
 
 
 class TestSUMPCommandSequence(unittest.TestCase):
@@ -788,6 +865,14 @@ class TestSUMPModeGuard(unittest.TestCase):
             self.assertIn("RAMN_SUMP_ResetCapture", content)
             self.assertIn("RAMN_SUMP_Samples", content)
             self.assertIn("RAMN_SUMP_SampleCount", content)
+            self.assertIn("RAMN_SUMP_WriteIndex", content)
+            self.assertIn("RAMN_SUMP_TriggerIndex", content)
+            self.assertIn("RAMN_SUMP_MarkTrigger", content)
+            self.assertIn("SUMP_BIT_TX", content)
+            self.assertIn("SUMP_BIT_RX", content)
+            self.assertIn("SUMP_BIT_TRIG", content)
+            self.assertIn("SUMP_NO_TRIGGER", content)
+            self.assertIn("SUMP_SAMPLE_BUFFER_MASK", content)
 
 
 class TestSUMPFlowControl(unittest.TestCase):
@@ -877,7 +962,7 @@ class TestSUMPAutoDetect(unittest.TestCase):
 
 
 class TestSUMPBitbangCapture(unittest.TestCase):
-    """Test that bitbang operations populate the SUMP sample buffer."""
+    """Test that bitbang operations populate the SUMP circular sample buffer."""
 
     def test_record_sample_basic(self):
         """Recording a sample stores correct TX/RX bits."""
@@ -885,13 +970,13 @@ class TestSUMPBitbangCapture(unittest.TestCase):
         dev.reset_capture()
         dev.record_sample(tx_high=True, rx_high=False)
         self.assertEqual(dev.sample_count, 1)
-        self.assertEqual(dev.samples[0], 0x01)  # TX high, RX low
+        self.assertEqual(dev.samples[0], SUMP_BIT_TX)  # TX high, RX low
 
     def test_record_sample_both_high(self):
         dev = MockSUMPDevice()
         dev.reset_capture()
         dev.record_sample(tx_high=True, rx_high=True)
-        self.assertEqual(dev.samples[0], 0x03)
+        self.assertEqual(dev.samples[0], SUMP_BIT_TX | SUMP_BIT_RX)
 
     def test_record_sample_both_low(self):
         dev = MockSUMPDevice()
@@ -903,7 +988,7 @@ class TestSUMPBitbangCapture(unittest.TestCase):
         dev = MockSUMPDevice()
         dev.reset_capture()
         dev.record_sample(tx_high=False, rx_high=True)
-        self.assertEqual(dev.samples[0], 0x02)
+        self.assertEqual(dev.samples[0], SUMP_BIT_RX)
 
     def test_record_multiple_samples(self):
         """Multiple samples accumulate sequentially."""
@@ -920,35 +1005,74 @@ class TestSUMPBitbangCapture(unittest.TestCase):
         self.assertEqual(dev.samples[3], 0x00)
 
     def test_reset_capture_clears_count(self):
-        """reset_capture zeros the sample count."""
+        """reset_capture zeros the sample count and write index."""
         dev = MockSUMPDevice()
         dev.record_sample(True, True)
         dev.record_sample(True, True)
         self.assertEqual(dev.sample_count, 2)
         dev.reset_capture()
         self.assertEqual(dev.sample_count, 0)
+        self.assertEqual(dev.write_index, 0)
+        self.assertEqual(dev.trigger_index, SUMP_NO_TRIGGER)
 
-    def test_buffer_limit(self):
-        """Samples beyond SUMP_SAMPLE_BUFFER_SIZE are not recorded."""
+    def test_circular_buffer_wraps(self):
+        """When more than SUMP_SAMPLE_BUFFER_SIZE samples are written, buffer wraps."""
         dev = MockSUMPDevice()
         dev.reset_capture()
-        for _ in range(SUMP_SAMPLE_BUFFER_SIZE + 10):
-            dev.record_sample(True, True)
-        self.assertEqual(dev.sample_count, SUMP_SAMPLE_BUFFER_SIZE)
+        for i in range(SUMP_SAMPLE_BUFFER_SIZE + 10):
+            tx = (i % 2 == 0)
+            dev.record_sample(tx, not tx)
+        self.assertEqual(dev.sample_count, SUMP_SAMPLE_BUFFER_SIZE + 10)
+        self.assertEqual(dev.write_index, 10)  # wrapped around
+
+    def test_mark_trigger_sets_index(self):
+        """mark_trigger records the linear sample index."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        dev.record_sample(True, True)
+        dev.record_sample(False, False)
+        dev.mark_trigger()
+        self.assertEqual(dev.trigger_index, 2)
+
+    def test_mark_trigger_sets_trig_bit(self):
+        """mark_trigger sets bit 2 on the most recently written sample."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        dev.record_sample(True, True)   # index 0: 0x03
+        dev.record_sample(False, False) # index 1: 0x00
+        dev.mark_trigger()
+        # The last sample (index 1) should now have TRIG bit set
+        self.assertEqual(dev.samples[1] & SUMP_BIT_TRIG, SUMP_BIT_TRIG)
+        # The first sample should NOT have TRIG bit
+        self.assertEqual(dev.samples[0] & SUMP_BIT_TRIG, 0)
+
+    def test_trigger_index_default_is_no_trigger(self):
+        """Before any trigger, trigger_index is SUMP_NO_TRIGGER."""
+        dev = MockSUMPDevice()
+        self.assertEqual(dev.trigger_index, SUMP_NO_TRIGGER)
+
+    def test_reset_clears_trigger_index(self):
+        """reset_capture resets trigger_index to SUMP_NO_TRIGGER."""
+        dev = MockSUMPDevice()
+        dev.record_sample(True, True)
+        dev.mark_trigger()
+        self.assertNotEqual(dev.trigger_index, SUMP_NO_TRIGGER)
+        dev.reset_capture()
+        self.assertEqual(dev.trigger_index, SUMP_NO_TRIGGER)
 
 
 class TestSUMPRunServesPreRecordedSamples(unittest.TestCase):
-    """Test that SUMP_RUN returns the pre-recorded bitbang samples."""
+    """Test that SUMP_RUN returns the pre-recorded bitbang samples with windowing."""
 
     def test_run_with_no_samples_returns_idle(self):
         """When no bitbang has been executed, RUN returns all-recessive samples."""
         dev = MockSUMPDevice()
         dev.read_count = 4
         dev.process_byte(SUMP_RUN)
-        # Should have 4 * 4 = 16 bytes (all 0x03, 0, 0, 0)
+        # Should have 4 * 4 = 16 bytes (all SUMP_BIT_TX|SUMP_BIT_RX = 0x03, 0, 0, 0)
         self.assertEqual(len(dev.output), 16)
         for i in range(4):
-            self.assertEqual(dev.output[i * 4], 0x03)
+            self.assertEqual(dev.output[i * 4], SUMP_BIT_TX | SUMP_BIT_RX)
             self.assertEqual(dev.output[i * 4 + 1], 0)
             self.assertEqual(dev.output[i * 4 + 2], 0)
             self.assertEqual(dev.output[i * 4 + 3], 0)
@@ -962,6 +1086,7 @@ class TestSUMPRunServesPreRecordedSamples(unittest.TestCase):
         dev.record_sample(False, True)   # sample 2: 0x02
         dev.record_sample(True, True)    # sample 3: 0x03
         dev.read_count = 4
+        dev.delay_count = 4  # all post-trigger (no trigger set)
         dev.process_byte(SUMP_RUN)
         # Newest first: 0x03, 0x02, 0x01, 0x00
         self.assertEqual(dev.output[0], 0x03)
@@ -970,15 +1095,16 @@ class TestSUMPRunServesPreRecordedSamples(unittest.TestCase):
         self.assertEqual(dev.output[12], 0x00)
 
     def test_run_clamps_to_available_samples(self):
-        """If read_count > available samples, only available are returned."""
+        """If read_count > available samples, pads with idle."""
         dev = MockSUMPDevice()
         dev.reset_capture()
         dev.record_sample(True, True)
         dev.record_sample(False, False)
-        dev.read_count = 100
+        dev.read_count = 4
+        dev.delay_count = 4
         dev.process_byte(SUMP_RUN)
-        # Only 2 samples available, so 2 * 4 = 8 bytes
-        self.assertEqual(len(dev.output), 8)
+        # 2 real + 2 padding = 4 samples * 4 bytes
+        self.assertEqual(len(dev.output), 16)
 
     def test_run_preserves_samples_across_multiple_reads(self):
         """Samples persist after SUMP_RUN (user can read again)."""
@@ -987,6 +1113,7 @@ class TestSUMPRunServesPreRecordedSamples(unittest.TestCase):
         dev.record_sample(True, True)
         dev.record_sample(False, True)
         dev.read_count = 2
+        dev.delay_count = 2
         dev.process_byte(SUMP_RUN)
         output1 = bytes(dev.output)
         dev.output.clear()
@@ -1000,12 +1127,202 @@ class TestSUMPRunServesPreRecordedSamples(unittest.TestCase):
         dev.reset_capture()
         dev.record_sample(True, False)  # 0x01
         dev.read_count = 1
+        dev.delay_count = 1
         dev.process_byte(SUMP_RUN)
         self.assertEqual(len(dev.output), 4)
         self.assertEqual(dev.output[0], 0x01)
         self.assertEqual(dev.output[1], 0)
         self.assertEqual(dev.output[2], 0)
         self.assertEqual(dev.output[3], 0)
+
+
+class TestSUMPPrePostTriggerWindowing(unittest.TestCase):
+    """Test the pre-trigger / post-trigger windowing behavior."""
+
+    def _record_sequence(self, dev, count, pattern=None):
+        """Record count samples. If pattern is None, use incrementing values."""
+        for i in range(count):
+            if pattern is not None:
+                tx = bool(pattern[i % len(pattern)] & SUMP_BIT_TX)
+                rx = bool(pattern[i % len(pattern)] & SUMP_BIT_RX)
+            else:
+                tx = bool(i & 1)
+                rx = bool(i & 2)
+            dev.record_sample(tx, rx)
+
+    def test_trigger_at_middle_windows_correctly(self):
+        """With trigger at middle, pre- and post-trigger samples are balanced."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        # Record 10 samples, trigger after sample 5
+        for i in range(5):
+            dev.record_sample(True, True)   # pre-trigger: 0x03
+        dev.mark_trigger()
+        for i in range(5):
+            dev.record_sample(False, False) # post-trigger: 0x00
+
+        dev.read_count = 8
+        dev.delay_count = 4  # 4 post-trigger, 4 pre-trigger
+
+        dev.output.clear()
+        dev.process_byte(SUMP_RUN)
+
+        # Expected: 8 samples * 4 bytes = 32 bytes
+        self.assertEqual(len(dev.output), 32)
+
+        # The window should be: 4 pre-trigger samples + 4 post-trigger samples
+        # Sent newest-to-oldest:
+        # Post-trigger samples are at indices 5,6,7,8 (values: 0x00)
+        # Pre-trigger samples are at indices 1,2,3,4 (values: 0x03, last one has TRIG bit)
+        # The trigger sample (index 4) has TRIG bit set: 0x03 | 0x04 = 0x07
+
+        # Newest first: index 8,7,6,5 (post-trigger, value 0x00), then 4,3,2,1 (pre)
+        samples = [dev.output[i * 4] for i in range(8)]
+        # Post-trigger (4 samples, value 0x00)
+        self.assertEqual(samples[0], 0x00)  # index 8
+        self.assertEqual(samples[1], 0x00)  # index 7
+        self.assertEqual(samples[2], 0x00)  # index 6
+        self.assertEqual(samples[3], 0x00)  # index 5
+        # Pre-trigger (4 samples): index 4 has TRIG bit, rest are 0x03
+        self.assertEqual(samples[4] & SUMP_BIT_TRIG, SUMP_BIT_TRIG)  # trigger sample
+        self.assertEqual(samples[5], 0x03)  # index 3
+        self.assertEqual(samples[6], 0x03)  # index 2
+        self.assertEqual(samples[7], 0x03)  # index 1
+
+    def test_no_trigger_sends_most_recent(self):
+        """Without trigger, sends the most recent read_count samples."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        for i in range(100):
+            dev.record_sample(i % 2, (i + 1) % 2)
+        dev.read_count = 10
+        dev.delay_count = 10
+        dev.output.clear()
+        dev.process_byte(SUMP_RUN)
+        # Should get 10 samples, newest to oldest (indices 99..90)
+        self.assertEqual(len(dev.output), 40)
+
+    def test_trigger_with_max_pre_window(self):
+        """All pre-trigger, no post-trigger (delay_count=0)."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        for i in range(20):
+            dev.record_sample(True, True)
+        dev.mark_trigger()
+        for i in range(20):
+            dev.record_sample(False, False)
+
+        dev.read_count = 10
+        dev.delay_count = 0  # All pre-trigger
+
+        dev.output.clear()
+        dev.process_byte(SUMP_RUN)
+        self.assertEqual(len(dev.output), 40)
+
+        # All samples should be from before the trigger (0x03)
+        # The last sample sent is the trigger point with TRIG bit
+        samples = [dev.output[i * 4] for i in range(10)]
+        # Newest sample in the window is the trigger point itself
+        self.assertEqual(samples[0] & SUMP_BIT_TRIG, SUMP_BIT_TRIG)
+        # Earlier samples are just 0x03
+        for s in samples[1:]:
+            self.assertEqual(s, 0x03)
+
+    def test_trigger_with_max_post_window(self):
+        """All post-trigger, no pre-trigger (delay_count=read_count)."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        for i in range(20):
+            dev.record_sample(True, True)
+        dev.mark_trigger()
+        for i in range(20):
+            dev.record_sample(False, False)
+
+        dev.read_count = 10
+        dev.delay_count = 10  # All post-trigger
+
+        dev.output.clear()
+        dev.process_byte(SUMP_RUN)
+        self.assertEqual(len(dev.output), 40)
+
+        # All 10 samples should be from after the trigger (0x00)
+        samples = [dev.output[i * 4] for i in range(10)]
+        for s in samples:
+            self.assertEqual(s, 0x00)
+
+    def test_trigger_near_start_pads_with_idle(self):
+        """If trigger is near the start, pre-window is padded."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        dev.record_sample(True, True)  # 1 sample before trigger
+        dev.mark_trigger()
+        for i in range(10):
+            dev.record_sample(False, False)
+
+        dev.read_count = 8
+        dev.delay_count = 4  # 4 pre + 4 post
+
+        dev.output.clear()
+        dev.process_byte(SUMP_RUN)
+        self.assertEqual(len(dev.output), 32)
+
+    def test_trigger_bit_visible_in_output(self):
+        """The TRIG bit (bit 2) appears in exactly one sample in the output."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        for i in range(20):
+            dev.record_sample(True, True)
+        dev.mark_trigger()
+        for i in range(20):
+            dev.record_sample(True, True)
+
+        dev.read_count = 30
+        dev.delay_count = 15
+
+        dev.output.clear()
+        dev.process_byte(SUMP_RUN)
+
+        samples = [dev.output[i * 4] for i in range(30)]
+        trig_samples = [s for s in samples if s & SUMP_BIT_TRIG]
+        self.assertEqual(len(trig_samples), 1, "Exactly one sample should have TRIG bit")
+
+    def test_circular_buffer_with_trigger(self):
+        """Circular buffer correctly wraps and trigger still works."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+
+        # Fill buffer past capacity (5000 > 4096)
+        for i in range(4000):
+            dev.record_sample(True, True)
+        dev.mark_trigger()
+        for i in range(1000):
+            dev.record_sample(False, False)
+
+        dev.read_count = 2000
+        dev.delay_count = 1000  # 1000 pre + 1000 post
+
+        dev.output.clear()
+        dev.process_byte(SUMP_RUN)
+        self.assertEqual(len(dev.output), 2000 * 4)
+
+        # First 1000 samples (newest) should be post-trigger (0x00)
+        samples = [dev.output[i * 4] for i in range(1000)]
+        for s in samples:
+            self.assertEqual(s, 0x00)
+
+    def test_delay_count_comes_from_sump_cnt(self):
+        """SUMP_CNT command correctly sets delay_count for windowing."""
+        dev = MockSUMPDevice()
+        # SUMP_CNT: read=256, delay=128
+        for b in encode_sump_cnt(256, 128):
+            dev.process_byte(b)
+        self.assertEqual(dev.read_count, 256)
+        self.assertEqual(dev.delay_count, 128)
+
+    def test_default_delay_equals_buffer_size(self):
+        """Default delay_count = SUMP_SAMPLE_BUFFER_SIZE (all post-trigger)."""
+        dev = MockSUMPDevice()
+        self.assertEqual(dev.delay_count, SUMP_SAMPLE_BUFFER_SIZE)
 
 
 class TestSUMPCDCBinaryForwarding(unittest.TestCase):

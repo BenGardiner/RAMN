@@ -22,9 +22,11 @@
 #include "cmsis_os.h"
 #include "stream_buffer.h"
 
-// Shared sample buffer: written by bitbang operations, read by SUMP protocol.
+// Shared sample buffer: circular, written by bitbang operations, read by SUMP protocol.
 uint8_t  RAMN_SUMP_Samples[SUMP_SAMPLE_BUFFER_SIZE];
 volatile uint32_t RAMN_SUMP_SampleCount = 0;
+volatile uint32_t RAMN_SUMP_WriteIndex = 0;
+volatile uint32_t RAMN_SUMP_TriggerIndex = SUMP_NO_TRIGGER;
 
 // SUMP configuration
 static SUMP_Config_t sump_cfg;
@@ -93,47 +95,103 @@ static void SUMP_SendMetadata(void)
     SUMP_SendByte(SUMP_META_END);
 }
 
-// ---- Send Pre-Recorded Samples ----
+// ---- Send Pre-Recorded Samples (windowed around trigger) ----
 
 static void SUMP_SendCapturedSamples(void)
 {
-    uint32_t available = RAMN_SUMP_SampleCount;
-    uint32_t read_count = sump_cfg.read_count;
+    uint32_t total_written = RAMN_SUMP_SampleCount;
+    uint32_t trig_idx = RAMN_SUMP_TriggerIndex;
 
-    // Clamp to buffer size and available data
+    // Determine how many samples are actually in the circular buffer
+    uint32_t available = total_written;
+    if (available > SUMP_SAMPLE_BUFFER_SIZE) available = SUMP_SAMPLE_BUFFER_SIZE;
+
+    // Determine how many samples PulseView wants
+    uint32_t read_count = sump_cfg.read_count;
     if (read_count > SUMP_SAMPLE_BUFFER_SIZE) read_count = SUMP_SAMPLE_BUFFER_SIZE;
     if (read_count == 0) read_count = SUMP_SAMPLE_BUFFER_SIZE;
-    if (read_count > available) read_count = available;
 
-    // If no samples captured yet, send all-recessive (both pins high)
-    if (read_count == 0)
+    // If no samples captured yet, send all-recessive (both pins high, no trigger)
+    if (available == 0)
     {
-        uint8_t idle_sample[4] = {0x03, 0, 0, 0};
-        for (uint32_t i = 0; i < sump_cfg.read_count && i < SUMP_SAMPLE_BUFFER_SIZE; i++)
+        uint8_t idle_sample[4] = {SUMP_BIT_TX | SUMP_BIT_RX, 0, 0, 0};
+        for (uint32_t i = 0; i < read_count; i++)
         {
             SUMP_SendBytes(idle_sample, 4U);
         }
         return;
     }
 
-    // Send samples newest-to-oldest (SUMP protocol requirement)
-    {
-        uint32_t idx = available;
-        uint32_t count = read_count;
-        uint8_t buf[4];
+    // Window around the trigger point.
+    // delay_count = number of post-trigger samples PulseView expects.
+    // The "end" of data we send is delay_count samples after the trigger.
+    // The "start" is (read_count - delay_count) samples before the trigger.
+    //
+    // If no trigger was recorded, treat the last sample as the trigger point
+    // (send the most recent read_count samples).
 
-        while (count > 0)
+    uint32_t delay_count = sump_cfg.delay_count;
+    if (delay_count > read_count) delay_count = read_count;
+
+    // Determine the trigger position in the circular buffer
+    // trig_idx is in the linear SampleCount space.
+    // The circular buffer position of sample N is: N & SUMP_SAMPLE_BUFFER_MASK
+    // But we need to handle the case where samples have wrapped.
+    uint32_t end_linear;  // The linear index of the last sample to send (+1)
+    uint32_t start_linear; // The linear index of the first sample to send
+
+    if (trig_idx != SUMP_NO_TRIGGER && trig_idx <= total_written)
+    {
+        // Trigger is valid. Window around it.
+        end_linear = trig_idx + delay_count;
+        // Clamp to what's actually written
+        if (end_linear > total_written) end_linear = total_written;
+        start_linear = (end_linear > read_count) ? (end_linear - read_count) : 0;
+    }
+    else
+    {
+        // No trigger. Send the most recent read_count samples.
+        end_linear = total_written;
+        start_linear = (total_written > read_count) ? (total_written - read_count) : 0;
+    }
+
+    // Ensure we don't read samples that have been overwritten by the circular buffer
+    if (total_written > SUMP_SAMPLE_BUFFER_SIZE)
+    {
+        uint32_t oldest_available = total_written - SUMP_SAMPLE_BUFFER_SIZE;
+        if (start_linear < oldest_available) start_linear = oldest_available;
+    }
+
+    uint32_t send_count = end_linear - start_linear;
+    if (send_count > read_count) send_count = read_count;
+
+    // SUMP protocol: send samples newest-to-oldest (reverse order)
+    uint8_t buf[4];
+    // First, send samples from end_linear down to start_linear
+    {
+        uint32_t idx = end_linear;
+        uint32_t sent = 0;
+        while (sent < send_count && idx > start_linear)
         {
             idx--;
-            uint8_t s = RAMN_SUMP_Samples[idx];
-
-            // Send sample as 4 bytes (SUMP expects 4 bytes per sample group)
-            buf[0] = s;
+            uint32_t circ_idx = idx & SUMP_SAMPLE_BUFFER_MASK;
+            buf[0] = RAMN_SUMP_Samples[circ_idx];
             buf[1] = 0;
             buf[2] = 0;
             buf[3] = 0;
             SUMP_SendBytes(buf, 4U);
-            count--;
+            sent++;
+        }
+
+        // If we need to pad to reach read_count, send idle samples
+        while (sent < read_count)
+        {
+            buf[0] = SUMP_BIT_TX | SUMP_BIT_RX;  // idle: both recessive, no trigger
+            buf[1] = 0;
+            buf[2] = 0;
+            buf[3] = 0;
+            SUMP_SendBytes(buf, 4U);
+            sent++;
         }
     }
 }

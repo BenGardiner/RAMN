@@ -69,15 +69,30 @@
 // ------- SUMP Capture Settings -------
 
 // Number of samples in the circular buffer.
-// Each sample is 1 byte (only 2 bits used: CAN_TX and CAN_RX).
+// Each sample is 1 byte (3 bits used: CAN_TX, CAN_RX, TRIG).
+// Must be a power of 2 for efficient circular buffer masking.
 #define SUMP_SAMPLE_BUFFER_SIZE  4096
+
+// Mask for circular buffer index wrap-around (buffer_size - 1).
+#define SUMP_SAMPLE_BUFFER_MASK  (SUMP_SAMPLE_BUFFER_SIZE - 1)
 
 // Sample rate reported to PulseView. This is a nominal value;
 // actual sample rate depends on the bitbang bit_quanta setting.
 #define SUMP_MAX_SAMPLE_RATE     1000000
 
-// Number of probes (channels): CAN_TX = channel 0, CAN_RX = channel 1
-#define SUMP_NUM_PROBES  2
+// Number of probes (channels):
+//   Channel 0: CAN_TX (PB9)
+//   Channel 1: CAN_RX (PB8)
+//   Channel 2: TRIG   (high for one sample at the bitbang trigger point)
+#define SUMP_NUM_PROBES  3
+
+// Sample bit positions
+#define SUMP_BIT_TX    0x01   // Bit 0: CAN TX
+#define SUMP_BIT_RX    0x02   // Bit 1: CAN RX
+#define SUMP_BIT_TRIG  0x04   // Bit 2: Trigger marker
+
+// Special value indicating no trigger has been recorded yet
+#define SUMP_NO_TRIGGER  0xFFFFFFFF
 
 // ASCII ESC character used to exit SUMP mode from a terminal
 #define SUMP_EXIT_CHAR  0x1B
@@ -105,31 +120,53 @@ typedef struct {
 
 // ------- Shared Sample Buffer (written by bitbang, read by SUMP) -------
 
-// Sample buffer and count, populated by bitbang operations.
-// Each byte: bit 0 = CAN_TX (PB9), bit 1 = CAN_RX (PB8).
+// Circular sample buffer populated by bitbang operations.
+// Each byte: bit 0 = CAN_TX (PB9), bit 1 = CAN_RX (PB8), bit 2 = TRIG.
 extern uint8_t  RAMN_SUMP_Samples[SUMP_SAMPLE_BUFFER_SIZE];
+
+// Total number of samples written (may exceed buffer size; used for wrap detection).
 extern volatile uint32_t RAMN_SUMP_SampleCount;
 
-// Record a TX+RX sample into the SUMP buffer (called from bitbang ISR-disabled code).
+// Circular buffer write index (always < SUMP_SAMPLE_BUFFER_SIZE).
+extern volatile uint32_t RAMN_SUMP_WriteIndex;
+
+// Sample index (within SampleCount space) where the bitbang trigger fired.
+// Set to SUMP_NO_TRIGGER before a capture; set by BB_SUMP_MARK_TRIGGER.
+extern volatile uint32_t RAMN_SUMP_TriggerIndex;
+
+// Record a TX+RX sample into the SUMP circular buffer.
+// Called from bitbang ISR-disabled code.
 // tx_high: 1 if TX pin is recessive, 0 if dominant
 // rx_high: 1 if RX pin is recessive, 0 if dominant
 static inline void RAMN_SUMP_RecordSample(uint8_t tx_high, uint8_t rx_high)
 {
-    uint32_t idx = RAMN_SUMP_SampleCount;
-    if (idx < SUMP_SAMPLE_BUFFER_SIZE)
-    {
-        uint8_t sample = 0;
-        if (tx_high) sample |= 0x01;
-        if (rx_high) sample |= 0x02;
-        RAMN_SUMP_Samples[idx] = sample;
-        RAMN_SUMP_SampleCount = idx + 1;
-    }
+    uint32_t wi = RAMN_SUMP_WriteIndex;
+    uint8_t sample = 0;
+    if (tx_high) sample |= SUMP_BIT_TX;
+    if (rx_high) sample |= SUMP_BIT_RX;
+    RAMN_SUMP_Samples[wi] = sample;
+    RAMN_SUMP_WriteIndex = (wi + 1) & SUMP_SAMPLE_BUFFER_MASK;
+    RAMN_SUMP_SampleCount++;
+}
+
+// Mark the current position as the trigger point.
+// The trigger sample gets the TRIG bit set (bit 2 = high for one sample).
+static inline void RAMN_SUMP_MarkTrigger(void)
+{
+    // Record trigger index in the linear sample count space
+    RAMN_SUMP_TriggerIndex = RAMN_SUMP_SampleCount;
+
+    // Set the TRIG bit on the most recently written sample
+    uint32_t prev = (RAMN_SUMP_WriteIndex - 1) & SUMP_SAMPLE_BUFFER_MASK;
+    RAMN_SUMP_Samples[prev] |= SUMP_BIT_TRIG;
 }
 
 // Reset the sample buffer before a new bitbang operation.
 static inline void RAMN_SUMP_ResetCapture(void)
 {
     RAMN_SUMP_SampleCount = 0;
+    RAMN_SUMP_WriteIndex = 0;
+    RAMN_SUMP_TriggerIndex = SUMP_NO_TRIGGER;
 }
 
 // ------- Public API -------

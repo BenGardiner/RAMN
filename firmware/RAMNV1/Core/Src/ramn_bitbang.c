@@ -39,9 +39,11 @@ const uint32_t TX_DOM = (1U << (9 + 16));
 #if defined(ENABLE_SUMP_OLS)
 #define BB_SUMP_RECORD(tx_is_high, rx_is_high) RAMN_SUMP_RecordSample(tx_is_high, rx_is_high)
 #define BB_SUMP_RESET() RAMN_SUMP_ResetCapture()
+#define BB_SUMP_MARK_TRIGGER() RAMN_SUMP_MarkTrigger()
 #else
 #define BB_SUMP_RECORD(tx_is_high, rx_is_high) ((void)0)
 #define BB_SUMP_RESET() ((void)0)
+#define BB_SUMP_MARK_TRIGGER() ((void)0)
 #endif
 
 // Special Arbitration IDs used to trigger an action (trigger on any ID, trigger immediately, trigger on bus idle)
@@ -819,6 +821,7 @@ inline RAMN_Result_t RAMN_BITBANG_Read(void)
 		BB_Stop();
 		return RAMN_ERROR;
 	}
+	BB_SUMP_MARK_TRIGGER();
 
 	if (BB_ReadUntilEOF() != RAMN_OK)
 	{
@@ -878,6 +881,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_Dump(void)
 		BB_Stop();
 		return RAMN_ERROR;
 	}
+	BB_SUMP_MARK_TRIGGER();
 
 	next_sample = sampling_quanta + (bb_can_index * bit_quanta);
 
@@ -931,6 +935,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_Send(char *
 		BB_Stop();
 		return RAMN_ERROR;
 	}
+	BB_SUMP_MARK_TRIGGER();
 
 	bb_can_index = 0;
 
@@ -996,6 +1001,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_LoopOF(void
 		BB_Stop();
 		return RAMN_ERROR;
 	}
+	BB_SUMP_MARK_TRIGGER();
 
 	// Wait for 9 recessives
 	next_rx = (bb_can_index * bit_quanta) + sampling_quanta;
@@ -1092,6 +1098,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_DenyOnce(ui
 
 	if (Trigger() == RAMN_OK)
 	{
+		BB_SUMP_MARK_TRIGGER();
 		next_rx = (bit_quanta * bb_can_index) + sampling_quanta;
 
 		while (recessive_seen < target)
