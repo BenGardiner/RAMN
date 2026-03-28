@@ -246,7 +246,6 @@ __attribute__((optimize("Ofast"))) static void SUMP_ArmAndCapture(void)
 static uint8_t sump_cmd_pending = 0;
 static uint8_t sump_cmd_buf[4];
 static uint8_t sump_cmd_buf_idx = 0;
-static uint8_t sump_reset_count = 0;
 
 // Returns True if SUMP mode should exit
 static RAMN_Bool_t SUMP_ProcessCommand(uint8_t cmd, const uint8_t* params)
@@ -376,7 +375,6 @@ void RAMN_SUMP_Enter(void)
     // Initialize SUMP state
     sump_cmd_pending = 0;
     sump_cmd_buf_idx = 0;
-    sump_reset_count = 0;
     sump_cfg.state = SUMP_STATE_IDLE;
     sump_cfg.divider = 0;
     sump_cfg.read_count = SUMP_SAMPLE_BUFFER_SIZE;
@@ -395,6 +393,7 @@ void RAMN_SUMP_Enter(void)
     {
         uint16_t commandLength;
         size_t xBytesReceived;
+        RAMN_Bool_t shouldExit = False;
 
         // Wait for a USB data chunk
         xBytesReceived = xStreamBufferReceive(USBD_RxStreamBufferHandle, (void*)&commandLength, 2U, portMAX_DELAY);
@@ -404,33 +403,39 @@ void RAMN_SUMP_Enter(void)
         uint8_t rxBuf[64];
         uint32_t remaining = commandLength;
 
-        while (remaining > 0)
+        while (remaining > 0 && shouldExit == False)
         {
             uint32_t chunk = remaining;
             if (chunk > sizeof(rxBuf)) chunk = sizeof(rxBuf);
 
             xBytesReceived = xStreamBufferReceive(USBD_RxStreamBufferHandle, (void*)rxBuf, chunk, portMAX_DELAY);
             if (xBytesReceived == 0) break;
+            remaining -= xBytesReceived;
 
             for (uint32_t i = 0; i < xBytesReceived; i++)
             {
                 if (RAMN_SUMP_ProcessByte(rxBuf[i]) == True)
                 {
-                    // Drain remaining bytes
-                    remaining -= xBytesReceived;
-                    while (remaining > 0)
-                    {
-                        uint32_t drain = remaining;
-                        if (drain > sizeof(rxBuf)) drain = sizeof(rxBuf);
-                        size_t drained = xStreamBufferReceive(USBD_RxStreamBufferHandle, (void*)rxBuf, drain, 0);
-                        if (drained == 0) break;
-                        remaining -= drained;
-                    }
-                    RAMN_USB_SendStringFromTask("Exited SUMP/OLS mode.\r");
-                    return;
+                    shouldExit = True;
+                    break;
                 }
             }
-            remaining -= xBytesReceived;
+        }
+
+        // Drain any leftover bytes from this command
+        while (remaining > 0)
+        {
+            uint32_t drain = remaining;
+            if (drain > sizeof(rxBuf)) drain = sizeof(rxBuf);
+            size_t drained = xStreamBufferReceive(USBD_RxStreamBufferHandle, (void*)rxBuf, drain, 0);
+            if (drained == 0) break;
+            remaining -= drained;
+        }
+
+        if (shouldExit == True)
+        {
+            RAMN_USB_SendStringFromTask("Exited SUMP/OLS mode.\r");
+            return;
         }
     }
 }
