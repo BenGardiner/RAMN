@@ -84,6 +84,56 @@ class MockSUMPDevice:
         self.cmd_buf_idx = 0
         self.output = bytearray()
         self.exited = False
+        # Pre-recorded sample buffer (simulates bitbang capture)
+        self.samples = bytearray()
+        self.sample_count = 0
+
+    def record_sample(self, tx_high, rx_high):
+        """Record a TX+RX sample into the sample buffer (simulates bitbang capture)."""
+        if self.sample_count < SUMP_SAMPLE_BUFFER_SIZE:
+            sample = 0
+            if tx_high:
+                sample |= 0x01
+            if rx_high:
+                sample |= 0x02
+            if len(self.samples) <= self.sample_count:
+                self.samples.extend(bytearray(SUMP_SAMPLE_BUFFER_SIZE - len(self.samples)))
+            self.samples[self.sample_count] = sample
+            self.sample_count += 1
+
+    def reset_capture(self):
+        """Reset the sample buffer before a new bitbang operation."""
+        self.sample_count = 0
+
+    def send_captured_samples(self):
+        """Send pre-recorded samples (newest-to-oldest) as SUMP RUN response."""
+        available = self.sample_count
+        read_count = self.read_count
+        if read_count > SUMP_SAMPLE_BUFFER_SIZE:
+            read_count = SUMP_SAMPLE_BUFFER_SIZE
+        if read_count == 0:
+            read_count = SUMP_SAMPLE_BUFFER_SIZE
+        if read_count > available:
+            read_count = available
+        if read_count == 0:
+            # No samples: send all-recessive
+            rc = self.read_count if self.read_count <= SUMP_SAMPLE_BUFFER_SIZE else SUMP_SAMPLE_BUFFER_SIZE
+            for _ in range(rc):
+                self.output.extend(bytes([0x03, 0, 0, 0]))
+            return
+        idx = available
+        for _ in range(read_count):
+            idx -= 1
+            s = self.samples[idx]
+            self.output.extend(bytes([s, 0, 0, 0]))
+
+    @staticmethod
+    def is_sump_probe(buffer, length):
+        """Check if a received buffer indicates PulseView is connecting.
+        Mirrors RAMN_SUMP_IsSUMPProbe logic."""
+        if length == 1 and buffer[0] == SUMP_ID:
+            return True
+        return False
 
     def send_byte(self, b):
         """Send a single byte to the device output."""
@@ -138,7 +188,7 @@ class MockSUMPDevice:
         elif cmd == SUMP_XON or cmd == SUMP_XOFF:
             pass  # Flow control: not implemented
         elif cmd == SUMP_RUN:
-            pass  # Would trigger capture in real hardware
+            self.send_captured_samples()  # Return pre-recorded bitbang samples
         elif cmd == SUMP_DIV:
             self.divider = params[0] | (params[1] << 8) | (params[2] << 16)
         elif cmd == SUMP_CNT:
@@ -719,7 +769,7 @@ class TestSUMPModeGuard(unittest.TestCase):
             self.assertIn("#if defined(ENABLE_SUMP_OLS) && !defined(ENABLE_CDC)", content)
 
     def test_sump_header_guard(self):
-        """Verify ramn_sump.h has the correct guard."""
+        """Verify ramn_sump.h has the correct guard and new API functions."""
         import os
         header_path = os.path.join(
             os.path.dirname(__file__), "..", "..",
@@ -733,6 +783,11 @@ class TestSUMPModeGuard(unittest.TestCase):
             self.assertIn("SUMP_RUN", content)
             self.assertIn("RAMN_SUMP_Enter", content)
             self.assertIn("RAMN_SUMP_ProcessByte", content)
+            self.assertIn("RAMN_SUMP_IsSUMPProbe", content)
+            self.assertIn("RAMN_SUMP_RecordSample", content)
+            self.assertIn("RAMN_SUMP_ResetCapture", content)
+            self.assertIn("RAMN_SUMP_Samples", content)
+            self.assertIn("RAMN_SUMP_SampleCount", content)
 
 
 class TestSUMPFlowControl(unittest.TestCase):
@@ -780,6 +835,252 @@ class TestSUMPEncodingHelpers(unittest.TestCase):
             make_sample(True, False),
             make_sample(False, True)
         )
+
+
+class TestSUMPAutoDetect(unittest.TestCase):
+    """Test SUMP auto-detection from PulseView connection."""
+
+    def test_single_byte_0x02_is_sump_probe(self):
+        """A single-byte buffer containing 0x02 (SUMP_ID) is a SUMP probe."""
+        self.assertTrue(MockSUMPDevice.is_sump_probe(bytes([SUMP_ID]), 1))
+
+    def test_multi_byte_buffer_is_not_sump_probe(self):
+        """A multi-byte buffer is not a SUMP probe."""
+        self.assertFalse(MockSUMPDevice.is_sump_probe(bytes([SUMP_ID, 0x00]), 2))
+
+    def test_other_single_bytes_are_not_sump_probe(self):
+        """Other single-byte commands are not SUMP probes."""
+        for b in [0x00, 0x01, 0x03, 0x04, 0x11, 0x13, 0x80, 0xFF]:
+            self.assertFalse(MockSUMPDevice.is_sump_probe(bytes([b]), 1),
+                             f"Byte 0x{b:02x} should not be a SUMP probe")
+
+    def test_sump_id_value_matches(self):
+        """SUMP_ID constant is 0x02."""
+        self.assertEqual(SUMP_ID, 0x02)
+
+    def test_autodetect_responds_with_1als(self):
+        """When auto-detect fires, device responds with '1ALS' and enters SUMP mode."""
+        dev = MockSUMPDevice()
+        if MockSUMPDevice.is_sump_probe(bytes([SUMP_ID]), 1):
+            dev.send_id()  # The auto-detect handler responds with the ID
+        self.assertEqual(bytes(dev.output), b"1ALS")
+
+    def test_pulseview_reset_bytes_ignored(self):
+        """PulseView sends 5x 0x00 (SUMP_RESET) before 0x02. Resets don't generate output."""
+        dev = MockSUMPDevice()
+        for _ in range(5):
+            dev.process_byte(SUMP_RESET)
+        self.assertEqual(len(dev.output), 0)
+        # Then the ID query should work
+        dev.process_byte(SUMP_ID)
+        self.assertEqual(bytes(dev.output), b"1ALS")
+
+
+class TestSUMPBitbangCapture(unittest.TestCase):
+    """Test that bitbang operations populate the SUMP sample buffer."""
+
+    def test_record_sample_basic(self):
+        """Recording a sample stores correct TX/RX bits."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        dev.record_sample(tx_high=True, rx_high=False)
+        self.assertEqual(dev.sample_count, 1)
+        self.assertEqual(dev.samples[0], 0x01)  # TX high, RX low
+
+    def test_record_sample_both_high(self):
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        dev.record_sample(tx_high=True, rx_high=True)
+        self.assertEqual(dev.samples[0], 0x03)
+
+    def test_record_sample_both_low(self):
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        dev.record_sample(tx_high=False, rx_high=False)
+        self.assertEqual(dev.samples[0], 0x00)
+
+    def test_record_sample_rx_only(self):
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        dev.record_sample(tx_high=False, rx_high=True)
+        self.assertEqual(dev.samples[0], 0x02)
+
+    def test_record_multiple_samples(self):
+        """Multiple samples accumulate sequentially."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        dev.record_sample(True, True)   # 0x03
+        dev.record_sample(True, False)  # 0x01
+        dev.record_sample(False, True)  # 0x02
+        dev.record_sample(False, False) # 0x00
+        self.assertEqual(dev.sample_count, 4)
+        self.assertEqual(dev.samples[0], 0x03)
+        self.assertEqual(dev.samples[1], 0x01)
+        self.assertEqual(dev.samples[2], 0x02)
+        self.assertEqual(dev.samples[3], 0x00)
+
+    def test_reset_capture_clears_count(self):
+        """reset_capture zeros the sample count."""
+        dev = MockSUMPDevice()
+        dev.record_sample(True, True)
+        dev.record_sample(True, True)
+        self.assertEqual(dev.sample_count, 2)
+        dev.reset_capture()
+        self.assertEqual(dev.sample_count, 0)
+
+    def test_buffer_limit(self):
+        """Samples beyond SUMP_SAMPLE_BUFFER_SIZE are not recorded."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        for _ in range(SUMP_SAMPLE_BUFFER_SIZE + 10):
+            dev.record_sample(True, True)
+        self.assertEqual(dev.sample_count, SUMP_SAMPLE_BUFFER_SIZE)
+
+
+class TestSUMPRunServesPreRecordedSamples(unittest.TestCase):
+    """Test that SUMP_RUN returns the pre-recorded bitbang samples."""
+
+    def test_run_with_no_samples_returns_idle(self):
+        """When no bitbang has been executed, RUN returns all-recessive samples."""
+        dev = MockSUMPDevice()
+        dev.read_count = 4
+        dev.process_byte(SUMP_RUN)
+        # Should have 4 * 4 = 16 bytes (all 0x03, 0, 0, 0)
+        self.assertEqual(len(dev.output), 16)
+        for i in range(4):
+            self.assertEqual(dev.output[i * 4], 0x03)
+            self.assertEqual(dev.output[i * 4 + 1], 0)
+            self.assertEqual(dev.output[i * 4 + 2], 0)
+            self.assertEqual(dev.output[i * 4 + 3], 0)
+
+    def test_run_returns_samples_newest_to_oldest(self):
+        """Samples should be sent in reverse order (newest first)."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        dev.record_sample(False, False)  # sample 0: 0x00
+        dev.record_sample(True, False)   # sample 1: 0x01
+        dev.record_sample(False, True)   # sample 2: 0x02
+        dev.record_sample(True, True)    # sample 3: 0x03
+        dev.read_count = 4
+        dev.process_byte(SUMP_RUN)
+        # Newest first: 0x03, 0x02, 0x01, 0x00
+        self.assertEqual(dev.output[0], 0x03)
+        self.assertEqual(dev.output[4], 0x02)
+        self.assertEqual(dev.output[8], 0x01)
+        self.assertEqual(dev.output[12], 0x00)
+
+    def test_run_clamps_to_available_samples(self):
+        """If read_count > available samples, only available are returned."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        dev.record_sample(True, True)
+        dev.record_sample(False, False)
+        dev.read_count = 100
+        dev.process_byte(SUMP_RUN)
+        # Only 2 samples available, so 2 * 4 = 8 bytes
+        self.assertEqual(len(dev.output), 8)
+
+    def test_run_preserves_samples_across_multiple_reads(self):
+        """Samples persist after SUMP_RUN (user can read again)."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        dev.record_sample(True, True)
+        dev.record_sample(False, True)
+        dev.read_count = 2
+        dev.process_byte(SUMP_RUN)
+        output1 = bytes(dev.output)
+        dev.output.clear()
+        dev.process_byte(SUMP_RUN)
+        output2 = bytes(dev.output)
+        self.assertEqual(output1, output2)
+
+    def test_run_each_sample_is_4_bytes(self):
+        """SUMP protocol sends each sample as 4 bytes: [sample, 0, 0, 0]."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        dev.record_sample(True, False)  # 0x01
+        dev.read_count = 1
+        dev.process_byte(SUMP_RUN)
+        self.assertEqual(len(dev.output), 4)
+        self.assertEqual(dev.output[0], 0x01)
+        self.assertEqual(dev.output[1], 0)
+        self.assertEqual(dev.output[2], 0)
+        self.assertEqual(dev.output[3], 0)
+
+
+class TestSUMPCDCBinaryForwarding(unittest.TestCase):
+    """Test the CDC ISR binary byte forwarding logic.
+
+    Simulates the behavior of usbd_cdc_if.c CDC_Receive_FS:
+    - Null (0x00) and newline bytes are ignored
+    - Non-printable control bytes (< 0x20) arriving as the first byte
+      with an empty buffer are forwarded immediately as 1-byte commands
+    - Printable bytes are buffered until \\r
+    """
+
+    def _simulate_cdc_receive(self, data):
+        """Simulate CDC_Receive_FS logic. Returns list of forwarded commands."""
+        commands = []
+        current_buf = bytearray()
+
+        for byte in data:
+            if byte == ord('\n') or byte == 0:
+                # Ignored
+                continue
+            elif byte < 0x20 and byte != ord('\r') and len(current_buf) == 0:
+                # SUMP auto-detect: forward immediately as 1-byte command
+                commands.append(bytes([byte]))
+            elif byte != ord('\r'):
+                current_buf.append(byte)
+            else:
+                # CR: forward buffered command
+                if len(current_buf) > 0:
+                    commands.append(bytes(current_buf))
+                current_buf = bytearray()
+
+        return commands
+
+    def test_sump_id_forwarded_immediately(self):
+        """SUMP_ID (0x02) arriving alone is forwarded as a 1-byte command."""
+        cmds = self._simulate_cdc_receive([0x02])
+        self.assertEqual(len(cmds), 1)
+        self.assertEqual(cmds[0], bytes([0x02]))
+
+    def test_null_bytes_ignored(self):
+        """Null bytes (0x00) are silently ignored."""
+        cmds = self._simulate_cdc_receive([0x00, 0x00, 0x00])
+        self.assertEqual(len(cmds), 0)
+
+    def test_pulseview_handshake_sequence(self):
+        """PulseView sends 5x 0x00 then 0x02. Only 0x02 gets forwarded."""
+        cmds = self._simulate_cdc_receive([0x00, 0x00, 0x00, 0x00, 0x00, 0x02])
+        self.assertEqual(len(cmds), 1)
+        self.assertEqual(cmds[0], bytes([0x02]))
+
+    def test_normal_slcan_command_unaffected(self):
+        """Normal slcan commands (printable + CR) work as before."""
+        cmds = self._simulate_cdc_receive(b"t12340011223344\r")
+        self.assertEqual(len(cmds), 1)
+        self.assertEqual(cmds[0], b"t12340011223344")
+
+    def test_cli_hash_command_unaffected(self):
+        """The # command to enter CLI mode still works."""
+        cmds = self._simulate_cdc_receive(b"#\r")
+        self.assertEqual(len(cmds), 1)
+        self.assertEqual(cmds[0], b"#")
+
+    def test_binary_byte_not_forwarded_if_buffer_nonempty(self):
+        """Control bytes after printable chars are buffered normally, not forwarded."""
+        cmds = self._simulate_cdc_receive([ord('t'), 0x02, ord('\r')])
+        self.assertEqual(len(cmds), 1)
+        # The 0x02 is buffered as part of the command, not forwarded separately
+        self.assertEqual(cmds[0], b"t\x02")
+
+    def test_esc_forwarded_for_sump_exit(self):
+        """ESC (0x1B) arriving alone is forwarded immediately."""
+        cmds = self._simulate_cdc_receive([0x1B])
+        self.assertEqual(len(cmds), 1)
+        self.assertEqual(cmds[0], bytes([0x1B]))
 
 
 if __name__ == "__main__":
