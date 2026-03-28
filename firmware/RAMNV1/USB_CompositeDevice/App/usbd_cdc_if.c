@@ -320,6 +320,30 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 			{
 				// newline or zero character, we just ignore it.
 			}
+#if defined(ENABLE_SUMP_OLS) && defined(ENABLE_BITBANG)
+			else if(Buf[i] < 0x20 && Buf[i] != '\r' && currentIndex == 0)
+			{
+				// SUMP auto-detect: a non-printable control byte arriving as the first byte
+				// (with an empty line buffer) is likely a binary SUMP protocol command from PulseView.
+				// Forward it immediately as a 1-byte command without waiting for \r.
+				uint16_t sumpLen = 1;
+				recvBuf[0] = Buf[i];
+				if(USBD_recvBuffer != NULL)
+				{
+					if (xStreamBufferSendFromISR(*USBD_recvBuffer, &sumpLen, 2U, NULL ) == 2U)
+					{
+						if (xStreamBufferSendFromISR(*USBD_recvBuffer, recvBuf, 1U, NULL ) == 1U)
+						{
+							vTaskNotifyGiveFromISR(*USBD_recvTask, &xHigherPriorityTaskWoken);
+							portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+						}
+						else RAMN_USB_Config.USBErrCnt++;
+					}
+					else RAMN_USB_Config.USBErrCnt++;
+				}
+				currentIndex = 0;
+			}
+#endif
 			else if(Buf[i] != '\r') // Regular character, we add it to the buffer
 			{
 				recvBuf[currentIndex] = Buf[i];

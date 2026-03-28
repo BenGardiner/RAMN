@@ -16,7 +16,11 @@
 
 // Module implementing SUMP / OLS (Open Bench Logic Sniffer) protocol
 // for monitoring CAN TX and RX pin states via PulseView / sigrok.
-// Active concurrently with bitbang mode.
+//
+// Capture happens passively during bitbang commands. When PulseView
+// connects (auto-detected via the SUMP ID query byte 0x02 arriving
+// as a single-byte command in slcan mode), the device enters SUMP
+// mode and serves the pre-recorded samples on SUMP_RUN.
 
 #ifndef INC_RAMN_SUMP_H_
 #define INC_RAMN_SUMP_H_
@@ -68,8 +72,8 @@
 // Each sample is 1 byte (only 2 bits used: CAN_TX and CAN_RX).
 #define SUMP_SAMPLE_BUFFER_SIZE  4096
 
-// Maximum sample rate in Hz (80 MHz / minimum prescaler).
-// Default to 1 MHz for a sensible PulseView experience.
+// Sample rate reported to PulseView. This is a nominal value;
+// actual sample rate depends on the bitbang bit_quanta setting.
 #define SUMP_MAX_SAMPLE_RATE     1000000
 
 // Number of probes (channels): CAN_TX = channel 0, CAN_RX = channel 1
@@ -99,6 +103,35 @@ typedef struct {
     SUMP_State_t state;         // Current state machine state
 } SUMP_Config_t;
 
+// ------- Shared Sample Buffer (written by bitbang, read by SUMP) -------
+
+// Sample buffer and count, populated by bitbang operations.
+// Each byte: bit 0 = CAN_TX (PB9), bit 1 = CAN_RX (PB8).
+extern uint8_t  RAMN_SUMP_Samples[SUMP_SAMPLE_BUFFER_SIZE];
+extern volatile uint32_t RAMN_SUMP_SampleCount;
+
+// Record a TX+RX sample into the SUMP buffer (called from bitbang ISR-disabled code).
+// tx_high: 1 if TX pin is recessive, 0 if dominant
+// rx_high: 1 if RX pin is recessive, 0 if dominant
+static inline void RAMN_SUMP_RecordSample(uint8_t tx_high, uint8_t rx_high)
+{
+    uint32_t idx = RAMN_SUMP_SampleCount;
+    if (idx < SUMP_SAMPLE_BUFFER_SIZE)
+    {
+        uint8_t sample = 0;
+        if (tx_high) sample |= 0x01;
+        if (rx_high) sample |= 0x02;
+        RAMN_SUMP_Samples[idx] = sample;
+        RAMN_SUMP_SampleCount = idx + 1;
+    }
+}
+
+// Reset the sample buffer before a new bitbang operation.
+static inline void RAMN_SUMP_ResetCapture(void)
+{
+    RAMN_SUMP_SampleCount = 0;
+}
+
 // ------- Public API -------
 
 // Enter SUMP mode. Processes SUMP binary commands until exit.
@@ -108,6 +141,11 @@ void RAMN_SUMP_Enter(void);
 // Process a single SUMP command byte (called from the receive loop).
 // Returns True if SUMP mode should exit.
 RAMN_Bool_t RAMN_SUMP_ProcessByte(uint8_t byte);
+
+// Check if a received slcan/CLI byte indicates PulseView is connecting.
+// Returns True if the byte is the SUMP_ID query (0x02), meaning
+// the device should auto-enter SUMP mode.
+RAMN_Bool_t RAMN_SUMP_IsSUMPProbe(const uint8_t* buffer, uint32_t length);
 
 #endif /* ENABLE_SUMP_OLS && ENABLE_BITBANG */
 #endif /* INC_RAMN_SUMP_H_ */

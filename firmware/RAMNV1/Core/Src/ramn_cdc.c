@@ -258,7 +258,7 @@ RAMN_Bool_t RAMN_CDC_ProcessCLIBuffer(uint8_t* USBRxBuffer, uint32_t commandLeng
 						RAMN_USB_SendStringFromTask("    - bb/bitbang: Bitbang CAN bus commands. Type 'bb help' for details.\r");
 #endif
 #if defined(ENABLE_SUMP_OLS) && defined(ENABLE_BITBANG)
-						RAMN_USB_SendStringFromTask("    - sump: Enter SUMP/OLS logic analyzer mode for PulseView. Send ESC (0x1B) to exit.\r");
+						RAMN_USB_SendStringFromTask("    - sump: Enter SUMP/OLS mode for PulseView (also auto-activates when PulseView connects). ESC to exit.\r");
 #endif
 						RAMN_USB_SendStringFromTask("\r");
 						RAMN_USB_SendStringFromTask("Commands are case sensitive.\r");
@@ -1040,6 +1040,19 @@ RAMN_Bool_t RAMN_CDC_ProcessSLCANBuffer(uint8_t* USBRxBuffer, uint32_t commandLe
 	uint8_t smallResponseBuffer[50U]; // Buffer for small responses
 
 	RAMN_Bool_t mustSwitch = False; //return value, set to True if device should switch to CLI mode
+
+#if defined(ENABLE_SUMP_OLS) && defined(ENABLE_BITBANG)
+	// SUMP auto-detect: when PulseView connects, it sends SUMP_ID (0x02) as a probe.
+	// The CDC ISR forwards this as a single-byte command. Detect it and enter SUMP mode.
+	if (RAMN_SUMP_IsSUMPProbe(USBRxBuffer, commandLength) == True)
+	{
+		// Respond to the ID query that triggered auto-detect
+		RAMN_USB_SendFromTask((const uint8_t*)"1ALS", 4U);
+		// Enter SUMP mode (blocks until ESC received)
+		RAMN_SUMP_Enter();
+		return False;
+	}
+#endif
 
 	if ((USBRxBuffer[0U] == '0') || (USBRxBuffer[0U] == '1'))
 	{

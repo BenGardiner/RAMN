@@ -19,23 +19,15 @@
 #if defined(ENABLE_SUMP_OLS) && defined(ENABLE_BITBANG)
 
 #include "ramn_usb.h"
-#include "ramn_canfd.h"
 #include "cmsis_os.h"
 #include "stream_buffer.h"
 
-// Circular sample buffer
-static uint8_t sump_samples[SUMP_SAMPLE_BUFFER_SIZE];
-static volatile uint32_t sump_index = 0;
+// Shared sample buffer: written by bitbang operations, read by SUMP protocol.
+uint8_t  RAMN_SUMP_Samples[SUMP_SAMPLE_BUFFER_SIZE];
+volatile uint32_t RAMN_SUMP_SampleCount = 0;
 
 // SUMP configuration
 static SUMP_Config_t sump_cfg;
-
-// Timer for SUMP sampling (reuses TIM2 from bitbang)
-#define SUMP_TIM (TIM2)
-
-// CAN pin definitions (same as bitbang: PB8 = RX, PB9 = TX)
-#define SUMP_PIN_RX  (1U << 8)
-#define SUMP_PIN_TX  (1U << 9)
 
 // Extern: USB RX stream buffer from main.c
 extern StreamBufferHandle_t USBD_RxStreamBufferHandle;
@@ -43,51 +35,9 @@ extern StreamBufferHandle_t USBD_RxStreamBufferHandle;
 // Forward declarations
 static void SUMP_SendID(void);
 static void SUMP_SendMetadata(void);
-static void SUMP_ArmAndCapture(void);
-static void SUMP_SetupGPIO(void);
-static void SUMP_RestoreGPIO(void);
+static void SUMP_SendCapturedSamples(void);
 static void SUMP_SendByte(uint8_t byte);
 static void SUMP_SendBytes(const uint8_t* data, uint32_t len);
-static uint8_t SUMP_SamplePins(void);
-
-// ---- GPIO Setup / Restore ----
-
-static void SUMP_SetupGPIO(void)
-{
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-    RAMN_FDCAN_Disable();
-
-    // PB8 (CAN RX) as input
-    GPIO_InitStruct.Pin  = GPIO_PIN_8;
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-    // PB9 (CAN TX) as input (we only observe in SUMP mode)
-    GPIO_InitStruct.Pin  = GPIO_PIN_9;
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-}
-
-static void SUMP_RestoreGPIO(void)
-{
-    RAMN_FDCAN_ResetPeripheral();
-}
-
-// ---- Pin Sampling ----
-
-static inline uint8_t SUMP_SamplePins(void)
-{
-    uint32_t idr = GPIOB->IDR;
-    uint8_t sample = 0;
-    // Channel 0: CAN TX (PB9)
-    if (idr & SUMP_PIN_TX) sample |= 0x01;
-    // Channel 1: CAN RX (PB8)
-    if (idr & SUMP_PIN_RX) sample |= 0x02;
-    return sample;
-}
 
 // ---- USB Send Helpers ----
 
@@ -143,91 +93,39 @@ static void SUMP_SendMetadata(void)
     SUMP_SendByte(SUMP_META_END);
 }
 
-// ---- SUMP Capture ----
+// ---- Send Pre-Recorded Samples ----
 
-__attribute__((optimize("Ofast"))) static void SUMP_ArmAndCapture(void)
+static void SUMP_SendCapturedSamples(void)
 {
-    uint32_t read_count  = sump_cfg.read_count;
-    uint32_t delay_count = sump_cfg.delay_count;
-    uint32_t divider     = sump_cfg.divider;
-    uint32_t trig_mask   = sump_cfg.trigger_mask[0];
-    uint32_t trig_val    = sump_cfg.trigger_values[0];
+    uint32_t available = RAMN_SUMP_SampleCount;
+    uint32_t read_count = sump_cfg.read_count;
 
-    // Clamp counts to buffer size
+    // Clamp to buffer size and available data
     if (read_count > SUMP_SAMPLE_BUFFER_SIZE) read_count = SUMP_SAMPLE_BUFFER_SIZE;
-    if (delay_count > SUMP_SAMPLE_BUFFER_SIZE) delay_count = SUMP_SAMPLE_BUFFER_SIZE;
     if (read_count == 0) read_count = SUMP_SAMPLE_BUFFER_SIZE;
+    if (read_count > available) read_count = available;
 
-    SUMP_SetupGPIO();
-
-    // Configure timer for sampling
-    SUMP_TIM->CR1 &= ~TIM_CR1_CEN;
-    SUMP_TIM->PSC = 0;   // No prescaler (80 MHz base)
-    SUMP_TIM->CNT = 0;
-    SUMP_TIM->EGR = TIM_EGR_UG;
-    SUMP_TIM->CR1 |= TIM_CR1_CEN;
-
-    // Calculate period in timer ticks
-    // SUMP divider: sample_rate = max_clock / (divider + 1)
-    // We use 80 MHz base clock / (divider + 1)
-    uint32_t period = divider + 1;
-    if (period < 1) period = 1;
-
-    sump_index = 0;
-    sump_cfg.state = SUMP_STATE_ARMED;
-
-    // ---- Armed: sample until trigger ----
-    if (trig_mask != 0)
+    // If no samples captured yet, send all-recessive (both pins high)
+    if (read_count == 0)
     {
-        while (sump_cfg.state == SUMP_STATE_ARMED)
+        uint8_t idle_sample[4] = {0x03, 0, 0, 0};
+        for (uint32_t i = 0; i < sump_cfg.read_count && i < SUMP_SAMPLE_BUFFER_SIZE; i++)
         {
-            SUMP_TIM->CNT = 0;
-            while (SUMP_TIM->CNT < period);
-
-            uint8_t sample = SUMP_SamplePins();
-            sump_samples[sump_index & (SUMP_SAMPLE_BUFFER_SIZE - 1)] = sample;
-            sump_index++;
-
-            if (((sample ^ trig_val) & trig_mask) == 0)
-            {
-                sump_cfg.state = SUMP_STATE_TRIGGED;
-            }
+            SUMP_SendBytes(idle_sample, 4U);
         }
-    }
-    else
-    {
-        // No trigger: go straight to capturing
-        sump_cfg.state = SUMP_STATE_TRIGGED;
+        return;
     }
 
-    // ---- Triggered: capture delay_count more samples ----
+    // Send samples newest-to-oldest (SUMP protocol requirement)
     {
-        uint32_t remaining = delay_count;
-        while (remaining > 0)
-        {
-            SUMP_TIM->CNT = 0;
-            while (SUMP_TIM->CNT < period);
-
-            uint8_t sample = SUMP_SamplePins();
-            sump_samples[sump_index & (SUMP_SAMPLE_BUFFER_SIZE - 1)] = sample;
-            sump_index++;
-            remaining--;
-        }
-    }
-
-    SUMP_RestoreGPIO();
-    sump_cfg.state = SUMP_STATE_IDLE;
-
-    // ---- Send samples (newest to oldest) ----
-    {
-        uint32_t idx = sump_index;
+        uint32_t idx = available;
         uint32_t count = read_count;
         uint8_t buf[4];
 
         while (count > 0)
         {
             idx--;
-            uint8_t s = sump_samples[idx & (SUMP_SAMPLE_BUFFER_SIZE - 1)];
+            uint8_t s = RAMN_SUMP_Samples[idx];
 
             // Send sample as 4 bytes (SUMP expects 4 bytes per sample group)
             buf[0] = s;
@@ -253,7 +151,7 @@ static RAMN_Bool_t SUMP_ProcessCommand(uint8_t cmd, const uint8_t* params)
     switch (cmd)
     {
     case SUMP_RESET:
-        // Reset internal state
+        // Reset internal state (but preserve the captured sample buffer)
         sump_cfg.state = SUMP_STATE_IDLE;
         sump_cfg.divider = 0;
         sump_cfg.read_count = SUMP_SAMPLE_BUFFER_SIZE;
@@ -267,7 +165,8 @@ static RAMN_Bool_t SUMP_ProcessCommand(uint8_t cmd, const uint8_t* params)
         break;
 
     case SUMP_RUN:
-        SUMP_ArmAndCapture();
+        // Return the pre-recorded bitbang samples
+        SUMP_SendCapturedSamples();
         break;
 
     case SUMP_ID:
@@ -370,6 +269,18 @@ RAMN_Bool_t RAMN_SUMP_ProcessByte(uint8_t byte)
     }
 }
 
+RAMN_Bool_t RAMN_SUMP_IsSUMPProbe(const uint8_t* buffer, uint32_t length)
+{
+    // PulseView sends SUMP_ID (0x02) as its probe command.
+    // In slcan mode, 0x02 is not a valid slcan command character.
+    // A single-byte buffer containing only 0x02 indicates PulseView.
+    if (length == 1 && buffer[0] == SUMP_ID)
+    {
+        return True;
+    }
+    return False;
+}
+
 void RAMN_SUMP_Enter(void)
 {
     // Initialize SUMP state
@@ -385,8 +296,6 @@ void RAMN_SUMP_Enter(void)
         sump_cfg.trigger_mask[i] = 0;
         sump_cfg.trigger_values[i] = 0;
     }
-
-    RAMN_USB_SendStringFromTask("Entering SUMP/OLS mode. Connect PulseView or send ESC (0x1B) to exit.\r");
 
     // SUMP mode loop: read bytes directly from USB stream buffer
     for (;;)
@@ -434,7 +343,6 @@ void RAMN_SUMP_Enter(void)
 
         if (shouldExit == True)
         {
-            RAMN_USB_SendStringFromTask("Exited SUMP/OLS mode.\r");
             return;
         }
     }

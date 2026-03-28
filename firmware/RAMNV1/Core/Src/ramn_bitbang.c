@@ -18,6 +18,10 @@
 
 #ifdef ENABLE_BITBANG
 
+#if defined(ENABLE_SUMP_OLS)
+#include "ramn_sump.h"
+#endif
+
 #include "ramn_canfd.h"
 #include "ramn_usb.h"
 
@@ -28,6 +32,17 @@
 const uint32_t PIN_RX = (1U << 8);
 const uint32_t TX_REC = (1U << 9);
 const uint32_t TX_DOM = (1U << (9 + 16));
+
+// Macro to record a SUMP sample from the current GPIO state.
+// tx_is_high: whether the TX pin (PB9) is recessive (1) or dominant (0)
+// rx_is_high: whether the RX pin (PB8) is recessive (1) or dominant (0)
+#if defined(ENABLE_SUMP_OLS)
+#define BB_SUMP_RECORD(tx_is_high, rx_is_high) RAMN_SUMP_RecordSample(tx_is_high, rx_is_high)
+#define BB_SUMP_RESET() RAMN_SUMP_ResetCapture()
+#else
+#define BB_SUMP_RECORD(tx_is_high, rx_is_high) ((void)0)
+#define BB_SUMP_RESET() ((void)0)
+#endif
 
 // Special Arbitration IDs used to trigger an action (trigger on any ID, trigger immediately, trigger on bus idle)
 #define ARBID_TRIGGER_ANY  0xFFFFFFFF
@@ -199,9 +214,12 @@ __attribute__((optimize("Ofast"))) static inline RAMN_Result_t 	BB_ReadUntilEOF(
 	{
 		while (CANBIT_TIM->CNT < next_sample);
 
-		bb_can_bits[bb_can_index] = (GPIOB->IDR & (1U << 8)) ? '1' : '0';
+		uint32_t idr = GPIOB->IDR;
+		uint8_t rx_high = (idr & (1U << 8)) ? 1U : 0U;
+		bb_can_bits[bb_can_index] = rx_high ? '1' : '0';
+		BB_SUMP_RECORD((idr & (1U << 9)) ? 1U : 0U, rx_high);
 
-		if (bb_can_bits[bb_can_index] == '1') recessive_count++;
+		if (rx_high) recessive_count++;
 		else recessive_count = 0U;
 
 		bb_can_index++;
@@ -697,6 +715,7 @@ RAMN_Result_t RAMN_BITBANG_Show(void)
 __attribute__((optimize("Ofast"))) RAMN_Result_t RAMN_BITBANG_Jam(void)
 {
 	BB_Start();
+	BB_SUMP_RESET();
 	TIMEOUT_TIM->CNT = 0;
 
 	while (TIMEOUT_TIM->CNT < timeout)
@@ -704,6 +723,8 @@ __attribute__((optimize("Ofast"))) RAMN_Result_t RAMN_BITBANG_Jam(void)
 		CANBIT_TIM->CNT = 0;
 		while (CANBIT_TIM->CNT < bit_quanta);
 		HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_9);
+		uint32_t idr = GPIOB->IDR;
+		BB_SUMP_RECORD((idr & (1U << 9)) ? 1U : 0U, (idr & (1U << 8)) ? 1U : 0U);
 	}
 	BB_Stop();
 	return RAMN_OK;
@@ -786,6 +807,7 @@ inline RAMN_Result_t RAMN_BITBANG_Read(void)
 	}
 
 	BB_Start();
+	BB_SUMP_RESET();
 	__disable_irq();
 
 	TIMEOUT_TIM->CNT = 0;
@@ -842,6 +864,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_Dump(void)
 	uint32_t next_sample;
 
 	BB_Start();
+	BB_SUMP_RESET();
 	__disable_irq();
 
 	CANBIT_TIM->CNT = 0;
@@ -862,7 +885,9 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_Dump(void)
 	{
 		while (CANBIT_TIM->CNT < next_sample);
 
-		bb_can_bits[bb_can_index] = (GPIOB->IDR & (1U << 8)) ? '1' : '0';
+		uint32_t idr = GPIOB->IDR;
+		bb_can_bits[bb_can_index] = (idr & (1U << 8)) ? '1' : '0';
+		BB_SUMP_RECORD((idr & (1U << 9)) ? 1U : 0U, (idr & (1U << 8)) ? 1U : 0U);
 		bb_can_index++;
 		next_sample += bit_quanta;
 	}
@@ -892,6 +917,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_Send(char *
 	if (trig != ARBID_TRIGGER_IDLE) RAMN_USB_SendStringFromTask("Warning: you should use the 'idle' trigger.\r");
 
 	BB_Start();
+	BB_SUMP_RESET();
 	__disable_irq();
 
 	CANBIT_TIM->CNT = 0;
@@ -915,16 +941,20 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_Send(char *
 	{
 		while (CANBIT_TIM->CNT < next_tx);
 
+		uint8_t tx_high;
 		if (bb_can_index < tx_len)
 		{
-			if (param[bb_can_index] == '1') GPIOB->BSRR = TX_REC;
-			else if (param[bb_can_index] == '0') GPIOB->BSRR = TX_DOM;
+			if (param[bb_can_index] == '1') { GPIOB->BSRR = TX_REC; tx_high = 1U; }
+			else if (param[bb_can_index] == '0') { GPIOB->BSRR = TX_DOM; tx_high = 0U; }
+			else tx_high = 1U;
 		}
-		else GPIOB->BSRR = TX_REC;
+		else { GPIOB->BSRR = TX_REC; tx_high = 1U; }
 
 		while (CANBIT_TIM->CNT < next_rx);
 
-		bb_can_bits[bb_can_index] = (GPIOB->IDR & (1U << 8)) ? '1' : '0';
+		uint8_t rx_high = (GPIOB->IDR & (1U << 8)) ? 1U : 0U;
+		bb_can_bits[bb_can_index] = rx_high ? '1' : '0';
+		BB_SUMP_RECORD(tx_high, rx_high);
 
 		bb_can_index++;
 		next_tx += bit_quanta;
@@ -954,6 +984,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_LoopOF(void
 	uint32_t recessive_seen = 0;
 
 	BB_Start();
+	BB_SUMP_RESET();
 	__disable_irq();
 
 	TIMEOUT_TIM->CNT = 0;
@@ -972,12 +1003,14 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_LoopOF(void
 	{
 		while (CANBIT_TIM->CNT < next_rx);
 
-		uint8_t bit = (GPIOB->IDR & PIN_RX) ? 1U : 0U;
+		uint32_t idr = GPIOB->IDR;
+		uint8_t bit = (idr & PIN_RX) ? 1U : 0U;
 
 		if (bit) recessive_seen++;
 		else recessive_seen = 0;
 
 		if (bb_can_index < BB_RX_BUFFER_SIZE - 1) bb_can_bits[bb_can_index] = bit ? '1' : '0';
+		BB_SUMP_RECORD((idr & (1U << 9)) ? 1U : 0U, bit);
 
 		bb_can_index++;
 		next_rx += bit_quanta;
@@ -993,13 +1026,15 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_LoopOF(void
 		{
 			while (CANBIT_TIM->CNT < next_tx);
 
-			if (i < 6) GPIOB->BSRR = TX_DOM; // technically, 1 should be  enough, but we send 6.
-			else GPIOB->BSRR = TX_REC;
+			uint8_t tx_high;
+			if (i < 6) { GPIOB->BSRR = TX_DOM; tx_high = 0U; }
+			else { GPIOB->BSRR = TX_REC; tx_high = 1U; }
 
 			while (CANBIT_TIM->CNT < next_rx);
 
 			uint8_t bit = (GPIOB->IDR & PIN_RX) ? 1U : 0U;
 			bb_can_bits[bb_can_index] = bit ? '1' : '0';
+			BB_SUMP_RECORD(tx_high, bit);
 
 			bb_can_index++;
 
@@ -1046,6 +1081,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_DenyOnce(ui
 	}
 
 	BB_Start();
+	BB_SUMP_RESET();
 	__disable_irq();
 
 	TIMEOUT_TIM->CNT = 0;
@@ -1062,13 +1098,15 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_DenyOnce(ui
 		{
 			while (CANBIT_TIM->CNT < next_rx);
 
-			bit = (GPIOB->IDR & PIN_RX) ? 1U : 0U;
+			uint32_t idr = GPIOB->IDR;
+			bit = (idr & PIN_RX) ? 1U : 0U;
 
 			if (bit) recessive_seen++;
 			else recessive_seen = 0;
 
 			if (bb_can_index < BB_RX_BUFFER_SIZE - 1)
 				bb_can_bits[bb_can_index] = bit ? '1' : '0';
+			BB_SUMP_RECORD((idr & (1U << 9)) ? 1U : 0U, bit);
 
 			bb_can_index++;
 			next_rx += bit_quanta;
@@ -1082,6 +1120,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_DenyOnce(ui
 		while (CANBIT_TIM->CNT < next_rx);
 
 		bit = (GPIOB->IDR & PIN_RX) ? 1U : 0U;
+		BB_SUMP_RECORD(0U, bit);
 
 		if (bb_can_index < BB_RX_BUFFER_SIZE - 1)
 			bb_can_bits[bb_can_index] = bit ? '1' : '0';
@@ -1098,6 +1137,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_DenyOnce(ui
 			while (CANBIT_TIM->CNT < next_rx);
 
 			bit = (GPIOB->IDR & PIN_RX) ? 1U : 0U;
+			BB_SUMP_RECORD(1U, bit);
 
 			bb_can_bits[bb_can_index] = bit ? '1' : '0';
 
