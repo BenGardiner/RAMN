@@ -786,6 +786,118 @@ Send them to ECU D. You'll notice it does not trigger an error and ECU D happily
 
 .. image:: img/bb_send6.png
    :align: center 
+
+.. _sump_ols_mode:
+
+SUMP / OLS Logic Analyzer Mode
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+RAMN includes a built-in `SUMP / OLS <https://www.sump.org/projects/analyzer/protocol/>`_ protocol implementation that lets you visualize CAN bus bitstream captures using `PulseView <https://sigrok.org/wiki/PulseView>`_ (from the `sigrok <https://sigrok.org/>`_ project).
+This turns RAMN into a 3-channel logic analyzer for the CAN TX and RX signals, with trigger-point marking.
+
+.. note::
+
+	The SUMP/OLS mode requires both ``ENABLE_SUMP_OLS`` and ``ENABLE_BITBANG`` to be enabled in the firmware configuration. These are enabled by default in the ECU A firmware.
+
+How It Works
+~~~~~~~~~~~~
+
+The SUMP mode does **not** capture live.
+Instead, every ``bb`` (bitbang) command automatically records CAN TX and CAN RX pin samples into a 4096-sample circular buffer.
+When PulseView requests data, RAMN returns whatever was last captured by the most recent bitbang command.
+
+The captured data has three channels:
+
+- **Channel 0 (CAN_TX)**: The state of the CAN TX pin (PB9). High = recessive (1), low = dominant (0).
+- **Channel 1 (CAN_RX)**: The state of the CAN RX pin (PB8). High = recessive (1), low = dominant (0).
+- **Channel 2 (TRIG)**: A trigger marker that goes high for exactly one sample at the point where the bitbang trigger condition was met.
+
+The bitbang trigger (configured via ``bb set trig``) maps directly to the SUMP trigger channel.
+For example, if you set ``bb set trig 1BB`` and run ``bb read``, the TRIG channel in PulseView will pulse high at exactly the sample where message 0x1BB's start-of-frame was detected.
+This allows you to see both pre-trigger and post-trigger activity around the event of interest.
+
+The circular buffer holds up to 4096 samples.
+The sample rate is determined by the bitbang timing (set via ``bb set bit_quanta`` and ``bb set prescaler``).
+At the default 500 kbps settings (prescaler=1, bit_quanta=160), one sample is taken per CAN bit, giving an effective sample rate of 500 kHz.
+This means the buffer holds approximately 8 ms of CAN bus activity.
+
+Entering SUMP Mode
+~~~~~~~~~~~~~~~~~~~
+
+There are two ways to enter SUMP mode:
+
+**Method 1: Manual entry from the CLI**
+
+From the RAMN CLI, type:
+
+.. code-block:: text
+
+	sump
+
+The device will enter SUMP mode and wait for PulseView (or any SUMP-compatible client) to connect.
+
+**Method 2: Automatic entry from PulseView**
+
+When PulseView scans for devices, it sends the SUMP protocol ID query (byte ``0x02``).
+RAMN detects this automatically — even from slcan mode — and enters SUMP mode without any user intervention.
+This means you can simply open PulseView, select RAMN's serial port, and start working immediately.
+
+Typical Workflow
+~~~~~~~~~~~~~~~~
+
+A typical session looks like this:
+
+1. **Configure and run a bitbang capture.** Open a serial terminal, enter CLI mode with ``#``, and run a bitbang command:
+
+   .. code-block:: text
+
+   	bb set trig any
+   	bb dump
+
+   This captures CAN bus activity into the SUMP sample buffer. The bitbang trigger point is recorded.
+
+2. **Connect PulseView.** Open PulseView and add a new device using *Openbench Logic Sniffer & SUMP compatibles*. Select RAMN's serial port and press *Scan for devices*. RAMN will be detected as "RAMN" with 3 channels.
+
+3. **Fetch the capture.** Click *Run* in PulseView. It will retrieve the pre-recorded samples from the buffer. You will see the CAN TX, CAN RX, and TRIG channels.
+
+4. **Analyze the data.** You can use PulseView's protocol decoders, zoom, and cursor features to analyze the captured bitstream. The TRIG channel marks exactly where the bitbang trigger fired, making it easy to locate the event of interest.
+
+5. **Repeat.** Go back to your serial terminal, run another ``bb`` command (e.g., ``bb read``, ``bb dump``, ``bb deny_once 0``), and click *Run* in PulseView again to see the new capture. Each ``bb`` command resets and repopulates the sample buffer.
+
+.. note::
+
+	Because PulseView's auto-detection enters SUMP mode (which blocks the normal CLI), you should run your bitbang command **first** in the serial terminal, and then use PulseView to retrieve the data.
+	Alternatively, you can enter SUMP mode manually with ``sump``, then use PulseView, and then exit SUMP mode to run more bitbang commands.
+
+Pre-Trigger and Post-Trigger Windowing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The SUMP protocol supports configuring how many samples to return before and after the trigger point.
+PulseView sends this configuration via the SUMP ``CNT`` command as the *delay count* (number of post-trigger samples).
+
+When a trigger has been recorded:
+
+- Samples **before** the trigger (pre-trigger window) show what was happening on the bus leading up to the event.
+- Samples **after** the trigger (post-trigger window) show the response to the event.
+
+If no trigger was recorded (e.g., the bitbang command used ``bb set trig now``), RAMN returns the most recent samples from the buffer.
+
+The circular buffer allows RAMN to maximize the captured data: even if many samples are recorded, the most recent 4096 are always available.
+
+Exiting SUMP Mode
+~~~~~~~~~~~~~~~~~~
+
+To exit SUMP mode and return to the normal CLI:
+
+- **Press ESC** (ASCII ``0x1B``) in your serial terminal.
+
+This cleanly returns RAMN to the CLI prompt. No reset is required.
+
+.. note::
+
+	If you entered SUMP mode via PulseView's auto-detection (not via the ``sump`` CLI command), RAMN returns to its previous mode (slcan or CLI) when you send ESC.
+	Closing PulseView alone does **not** exit SUMP mode — you must send ESC from a serial terminal.
+
 	  
 Protocol Level Attacks
 ----------------------
