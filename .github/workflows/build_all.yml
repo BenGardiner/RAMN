@@ -153,9 +153,7 @@ jobs:
 
             # Restore original config for the remaining default ECUs
             cp /workspace/firmware/RAMNV1/Core/Inc/ramn_config.h.orig /workspace/firmware/RAMNV1/Core/Inc/ramn_config.h
-            if [ -f /workspace/firmware/RAMNV1/Core/Inc/FreeRTOSConfig.h.orig ]; then
-              cp /workspace/firmware/RAMNV1/Core/Inc/FreeRTOSConfig.h.orig /workspace/firmware/RAMNV1/Core/Inc/FreeRTOSConfig.h
-            fi
+            cp /workspace/firmware/RAMNV1/Core/Inc/FreeRTOSConfig.h.orig /workspace/firmware/RAMNV1/Core/Inc/FreeRTOSConfig.h
 
             # Build remaining ECUs with default config
             for target_ecu in TARGET_ECUA TARGET_ECUB TARGET_ECUC TARGET_ECUD; do
@@ -301,7 +299,7 @@ jobs:
   release:
     name: Upload release firmware
     needs: [build_all, macro_coverage]
-    if: always() && github.event_name == 'release'
+    if: always() && github.event_name == 'release' && needs.build_all.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
