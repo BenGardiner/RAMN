@@ -957,6 +957,18 @@ To exit ``bb gsusb`` mode:
 
 This restores the normal FDCAN peripheral and resumes standard GS_USB operation. No reset is required.
 
+SUMP Auto-Enter from bb gsusb
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+While in ``bb gsusb`` mode, RAMN also detects PulseView's SUMP probe (byte ``0x02``). When detected:
+
+1. The ``bb gsusb`` loop pauses and the bitbang GPIO pins are restored temporarily.
+2. RAMN responds to PulseView's ID query and enters SUMP mode.
+3. PulseView can fetch the pre-recorded samples from the most recent bitbang capture.
+4. When you press ESC in the serial terminal, SUMP mode exits and the ``bb gsusb`` loop resumes automatically.
+
+This allows you to view captured traces in PulseView without leaving ``bb gsusb`` mode — no need to exit, view, and re-enter.
+
 .. note::
 
 	While in ``bb gsusb`` mode, the bitbang timing parameters (``prescaler``, ``bit_quanta``, ``sampling_quanta``) configured via ``bb set`` are used. Make sure they match the CAN bus baud rate before entering the mode.
@@ -973,7 +985,7 @@ GS_USB Behavior Summary
 
 - **Normal operation** (default): GS_USB uses the FDCAN peripheral. The host sees CAN frames through SocketCAN as usual.
 - **During** ``bb`` **commands** (``bb read``, ``bb dump``, ``bb deny``, etc.): ECU A reconfigures its CAN pins to GPIO for bitbanging. The FDCAN peripheral is temporarily disabled. GS_USB continues to run on the host side, but no frames are forwarded during the bitbang operation because the FDCAN peripheral is inactive.  When the ``bb`` command completes, the FDCAN peripheral is restored and GS_USB resumes normal operation automatically.
-- **During** ``bb gsusb``: GS_USB frames are routed through the bitbang engine instead of FDCAN. The host still uses SocketCAN tools (``candump``, ``cansend``) transparently, but the actual TX/RX happens via GPIO bitbanging. When you exit with ESC, FDCAN is restored and GS_USB returns to normal FDCAN-based operation.
+- **During** ``bb gsusb``: GS_USB frames are routed through the bitbang engine instead of FDCAN. The host still uses SocketCAN tools (``candump``, ``cansend``) transparently, but the actual TX/RX happens via GPIO bitbanging. PulseView can auto-enter SUMP mode while ``bb gsusb`` is running (the loop pauses, serves SUMP data, then resumes). When you exit with ESC (while not in SUMP mode), FDCAN is restored and GS_USB returns to normal FDCAN-based operation.
 - **During** ``sump`` **mode**: The device processes SUMP protocol commands (from PulseView) instead of normal CLI or slcan traffic. GS_USB is not affected by SUMP mode itself — SUMP only changes how the USB serial data stream is interpreted. However, since you cannot run ``bb`` commands while in SUMP mode, no new bitbang captures occur.
 
 Full Iterative Workflow
@@ -1025,11 +1037,13 @@ If you want to use SocketCAN tools (``candump``, ``cansend``) to generate or mon
 
 2. **Use SocketCAN tools.** On the host, use ``candump can0`` to monitor or ``cansend can0 024#DEADBEEF`` to transmit. Frames are sent/received via bitbanging.
 
-3. **Exit** ``bb gsusb`` **mode.** Press ESC. GS_USB returns to normal FDCAN-based operation.
+3. **View the capture without exiting.** While still in ``bb gsusb`` mode, simply open PulseView and scan for the RAMN device. PulseView sends the SUMP probe byte (``0x02``), which RAMN detects automatically. The ``bb gsusb`` loop pauses, RAMN enters SUMP mode, and PulseView can fetch the pre-recorded samples. When you send ESC (or PulseView disconnects and you send ESC), SUMP mode exits and the ``bb gsusb`` loop resumes — no need to leave ``bb gsusb`` mode.
 
-4. **View the capture.** Enter SUMP mode (``sump`` or let PulseView auto-detect) and click *Run* in PulseView to see the captured bitstream from the ``bb gsusb`` session.
+   Alternatively, you can exit ``bb gsusb`` first (press ESC), then use ``sump`` or PulseView auto-detection from the CLI.
 
-5. **Repeat.** Re-enter ``bb gsusb``, generate more traffic, exit, and view in PulseView again.
+4. **Exit** ``bb gsusb`` **mode.** Press ESC in the serial terminal (when not in SUMP mode). GS_USB returns to normal FDCAN-based operation.
+
+5. **Repeat.** Generate more traffic with SocketCAN tools, view in PulseView (inline or after exiting), and iterate.
 
 .. note::
 

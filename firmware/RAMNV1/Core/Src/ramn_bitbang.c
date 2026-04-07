@@ -1428,6 +1428,56 @@ static RAMN_Bool_t BB_CheckForEsc(void)
 	return False;
 }
 
+#if defined(ENABLE_GSUSB) && defined(ENABLE_SUMP_OLS)
+// Result codes for BB_CheckForEscOrSUMP().
+typedef enum {
+	BB_CHECK_NONE = 0,    // Nothing special detected
+	BB_CHECK_ESC  = 1,    // ESC byte detected — exit bb gsusb loop
+	BB_CHECK_SUMP = 2     // SUMP probe (0x02) detected — enter SUMP mode
+} BB_CheckResult_t;
+
+// Check the USB CDC stream buffer for ESC or SUMP probe byte (non-blocking).
+// Used by the bb gsusb loop to support both exit-on-ESC and SUMP auto-enter.
+static BB_CheckResult_t BB_CheckForEscOrSUMP(void)
+{
+	uint16_t commandLength;
+	size_t xBytesReceived;
+
+	xBytesReceived = xStreamBufferReceive(USBD_RxStreamBufferHandle, (void*)&commandLength, 2U, 0);
+	if (xBytesReceived != 2U || commandLength == 0) return BB_CHECK_NONE;
+
+	// Single-byte command containing SUMP_ID (0x02) = PulseView probe
+	if (commandLength == 1)
+	{
+		uint8_t byte;
+		xBytesReceived = xStreamBufferReceive(USBD_RxStreamBufferHandle, (void*)&byte, 1U, pdMS_TO_TICKS(10));
+		if (xBytesReceived == 1)
+		{
+			if (byte == 0x1B) return BB_CHECK_ESC;
+			if (byte == SUMP_ID) return BB_CHECK_SUMP;
+		}
+		return BB_CHECK_NONE;
+	}
+
+	// Multi-byte command: scan for ESC
+	uint8_t rxBuf[64];
+	uint32_t remaining = commandLength;
+	while (remaining > 0)
+	{
+		uint32_t chunk = remaining;
+		if (chunk > sizeof(rxBuf)) chunk = sizeof(rxBuf);
+		size_t bytesRead = xStreamBufferReceive(USBD_RxStreamBufferHandle, (void*)rxBuf, chunk, pdMS_TO_TICKS(10));
+		if (bytesRead == 0) break;
+		remaining -= bytesRead;
+		for (uint32_t i = 0; i < bytesRead; i++)
+		{
+			if (rxBuf[i] == 0x1B) return BB_CHECK_ESC;
+		}
+	}
+	return BB_CHECK_NONE;
+}
+#endif /* ENABLE_GSUSB && ENABLE_SUMP_OLS */
+
 RAMN_Result_t RAMN_BITBANG_GsUsbLoop(void)
 {
 	BaseType_t ret;
@@ -1587,11 +1637,36 @@ RAMN_Result_t RAMN_BITBANG_GsUsbLoop(void)
 			__enable_irq();
 		}
 
-		// ---- Check for ESC to exit ----
+		// ---- Check for ESC to exit, or SUMP probe to enter SUMP mode ----
+#if defined(ENABLE_SUMP_OLS)
+		{
+			BB_CheckResult_t chk = BB_CheckForEscOrSUMP();
+			if (chk == BB_CHECK_ESC)
+			{
+				break;
+			}
+			else if (chk == BB_CHECK_SUMP)
+			{
+				// PulseView detected — pause bb gsusb, serve SUMP data, then resume.
+				// Stop bitbang (restores FDCAN pins) so SUMP can use USB freely.
+				BB_Stop();
+
+				// Respond to the ID query that triggered auto-detect
+				RAMN_USB_SendFromTask((const uint8_t*)"1ALS", 4U);
+
+				// Enter SUMP mode (blocks until ESC received from PulseView/terminal)
+				RAMN_SUMP_Enter();
+
+				// Resume bitbang for the next iteration of the gsusb loop
+				BB_Start();
+			}
+		}
+#else
 		if (BB_CheckForEsc())
 		{
 			break;
 		}
+#endif
 	}
 
 	BB_Stop();

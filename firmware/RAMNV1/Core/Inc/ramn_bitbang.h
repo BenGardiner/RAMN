@@ -59,7 +59,9 @@ RAMN_Result_t RAMN_BITBANG_Deny(uint8_t n);
 // Enter a GS_USB + bitbang bridge mode.
 // CAN frames received via bitbang are delivered to the host through GS_USB.
 // CAN frames sent by the host through GS_USB are transmitted via bitbang.
-// Press ESC to exit.
+// When ENABLE_SUMP_OLS is also defined, PulseView's SUMP probe (0x02) is
+// auto-detected: the loop pauses, enters SUMP mode to serve captured samples,
+// and resumes when SUMP exits (ESC). Press ESC (outside SUMP) to exit entirely.
 RAMN_Result_t RAMN_BITBANG_GsUsbLoop(void);
 #endif
 
