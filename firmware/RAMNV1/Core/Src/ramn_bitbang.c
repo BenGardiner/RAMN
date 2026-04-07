@@ -1602,11 +1602,11 @@ RAMN_Result_t RAMN_BITBANG_GsUsbLoop(void)
 
 	vTaskResume(RAMN_RxTask2Handle);
 
-	// bb mode flag is NOT cleared here: the user explicitly entered bb mode
-	// and ESC only exits the active loop (e.g. to return to the CLI).
-	// RAMN_GSUSB_BBMode remains True so FDCAN RX is not forwarded to GS_USB.
+	// Clear bb mode flag AFTER FDCAN is re-enabled and RxTask2 is resumed,
+	// so normal GS_USB operations resume cleanly.
+	RAMN_GSUSB_BBMode = False;
 
-	RAMN_USB_SendStringFromTask("Exited bb+GS_USB loop (bb mode still active).\r");
+	RAMN_USB_SendStringFromTask("Exited bb+GS_USB mode.\r");
 
 	return RAMN_OK;
 }
