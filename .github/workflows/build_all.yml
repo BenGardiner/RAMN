@@ -4,9 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  release:
+    types: [published]
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
   issues: write
 
@@ -63,12 +65,12 @@ jobs:
           name: build-metrics-${{ matrix.spice }}-${{ matrix.variant }}-${{ matrix.conf }}-${{ matrix.cubeide_docker_tag }}
           path: build-metrics/
 
-      - name: upload RAMN dir as artifact
+      - name: Upload firmware
         if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.spice }}-${{ matrix.variant }}-${{ matrix.conf }}-${{ matrix.cubeide_docker_tag }}
-          path: .
+          name: firmware-${{ matrix.variant }}-${{ matrix.conf }}
+          path: scripts/firmware/*.hex
 
   macro_coverage:
     name: ${{ matrix.variant }}
@@ -116,6 +118,11 @@ jobs:
       - name: checkout
         uses: actions/checkout@v4
 
+      - name: Save original config
+        run: |
+          cp firmware/RAMNV1/Core/Inc/ramn_config.h firmware/RAMNV1/Core/Inc/ramn_config.h.orig
+          cp firmware/RAMNV1/Core/Inc/FreeRTOSConfig.h firmware/RAMNV1/Core/Inc/FreeRTOSConfig.h.orig
+
       - name: Modify ramn_config.h
         run: |
           python3 .github/modify_config.py \
@@ -124,22 +131,40 @@ jobs:
             --enable "${{ matrix.enable }}" \
             --disable "${{ matrix.disable }}"
 
-      - name: Macro-testing build ${{ matrix.ecu }}
+      - name: Build all ECUs (${{ matrix.variant }})
         id: build
         continue-on-error: true
         run: |
           set -o pipefail
           chmod +x scripts/build/_build_ecu.sh
           source scripts/build/_version.sh
+          VARIANT_ECU="${{ matrix.ecu }}"
           docker run --rm -e STM32_IMPORT_FLAG -v "$(pwd)":/workspace xanderhendriks/stm32cubeide:${DOCKER_STM32CUBEIDE_TAG} bash -c '
             set -e
-            ECU='"'"'${{ matrix.ecu }}'"'"'
+            VARIANT_ECU="'"${VARIANT_ECU}"'"
+            VARIANT_ECU_NAME="${VARIANT_ECU#TARGET_}"
             OUTPUT_FOLDER="/workspace/scripts/firmware"
             PROJECT_NAME=RAMNV1
             mkdir -p "${OUTPUT_FOLDER}"
-            bash /workspace/scripts/build/_build_ecu.sh "${ECU}" Release --no-quiet
-            ECU_NAME="${ECU#TARGET_}"
-            cp -pr "/workspace/firmware/${PROJECT_NAME}/Release/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/${ECU_NAME}.hex"
+
+            # Build the variant ECU first (includes project import)
+            bash /workspace/scripts/build/_build_ecu.sh "${VARIANT_ECU}" Release --no-quiet
+            cp -pr "/workspace/firmware/${PROJECT_NAME}/Release/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/${VARIANT_ECU_NAME}.hex"
+
+            # Restore original config for the remaining default ECUs
+            cp /workspace/firmware/RAMNV1/Core/Inc/ramn_config.h.orig /workspace/firmware/RAMNV1/Core/Inc/ramn_config.h
+            if [ -f /workspace/firmware/RAMNV1/Core/Inc/FreeRTOSConfig.h.orig ]; then
+              cp /workspace/firmware/RAMNV1/Core/Inc/FreeRTOSConfig.h.orig /workspace/firmware/RAMNV1/Core/Inc/FreeRTOSConfig.h
+            fi
+
+            # Build remaining ECUs with default config
+            for target_ecu in TARGET_ECUA TARGET_ECUB TARGET_ECUC TARGET_ECUD; do
+              if [ "${target_ecu}" != "${VARIANT_ECU}" ]; then
+                ecu_name="${target_ecu#TARGET_}"
+                bash /workspace/scripts/build/_build_ecu.sh "${target_ecu}" Release --skip-import --no-quiet
+                cp -pr "/workspace/firmware/${PROJECT_NAME}/Release/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/${ecu_name}.hex"
+              fi
+            done
           ' 2>&1 | tee build-output.log
 
       - name: Collect build results
@@ -174,6 +199,13 @@ jobs:
         with:
           name: macro-results-${{ matrix.ecu }}-${{ matrix.variant }}
           path: macro-results/
+
+      - name: Upload firmware
+        if: steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-variant-${{ matrix.variant }}
+          path: scripts/firmware/*.hex
 
       - name: Report build result
         if: always()
@@ -265,3 +297,34 @@ jobs:
       - name: Fail if upstream builds failed
         if: always() && (needs.build_all.result == 'failure' || needs.macro_coverage.result == 'failure')
         run: exit 1
+
+  release:
+    name: Upload release firmware
+    needs: [build_all, macro_coverage]
+    if: always() && github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all firmware artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: firmware-*
+          path: all-firmware
+
+      - name: Package and upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cd all-firmware
+          for dir in */; do
+            name="${dir%/}"
+            ( cd "$dir" && zip -j "../../${name}.zip" *.hex )
+          done
+          cd ..
+          for zipfile in firmware-*.zip; do
+            echo "Uploading ${zipfile}..."
+            gh release upload "$RELEASE_TAG" "$zipfile" --clobber --repo "$GH_REPO"
+          done
