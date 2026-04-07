@@ -80,36 +80,28 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - ecu: TARGET_ECUA
-            variant: gsusb
+          - variant: gsusb
             enable: "ENABLE_GSUSB"
             disable: "ENABLE_CDC"
-          - ecu: TARGET_ECUA
-            variant: no_uds
+          - variant: no_uds
             enable: ""
             disable: "ENABLE_UDS ENABLE_UDS_REPROGRAMMING"
-          - ecu: TARGET_ECUA
-            variant: no_extras
+          - variant: no_extras
             enable: ""
             disable: "ENABLE_J1979 ENABLE_MINICTF ENABLE_CHIP8 ENABLE_SCREEN ENABLE_SPI"
-          - ecu: TARGET_ECUA
-            variant: no_debug
+          - variant: no_debug
             enable: ""
             disable: "ENABLE_USB_DEBUG ENABLE_JOYSTICK_CONTROLS ENABLE_SCREEN ENABLE_CHIP8 GENERATE_RUNTIME_STATS"
-          - ecu: TARGET_ECUB
-            variant: kwp
+          - variant: kwp
             enable: "ENABLE_KWP"
             disable: ""
-          - ecu: TARGET_ECUB
-            variant: no_dynamic_bitrate
+          - variant: no_dynamic_bitrate
             enable: ""
             disable: "ENABLE_DYNAMIC_BITRATE"
-          - ecu: TARGET_ECUB
-            variant: watchdog
+          - variant: watchdog
             enable: "WATCHDOG_ENABLE"
             disable: ""
-          - ecu: TARGET_ECUC
-            variant: uart
+          - variant: uart
             enable: "ENABLE_UART"
             disable: ""
 
@@ -121,7 +113,6 @@ jobs:
       - name: Modify ramn_config.h
         run: |
           python3 .github/modify_config.py \
-            --ecu "${{ matrix.ecu }}" \
             --variant "${{ matrix.variant }}" \
             --enable "${{ matrix.enable }}" \
             --disable "${{ matrix.disable }}"
@@ -139,7 +130,6 @@ jobs:
         run: |
           mkdir -p macro-results
           {
-            echo "ecu=${{ matrix.ecu }}"
             echo "variant=${{ matrix.variant }}"
             echo "enable=${{ matrix.enable }}"
             echo "disable=${{ matrix.disable }}"
@@ -183,7 +173,6 @@ jobs:
             echo "### ❌ Build FAILED" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "**Failed configuration details:**" >> $GITHUB_STEP_SUMMARY
-            echo "- **ECU:** \`${{ matrix.ecu }}\`" >> $GITHUB_STEP_SUMMARY
             echo "- **Variant:** \`${{ matrix.variant }}\`" >> $GITHUB_STEP_SUMMARY
             if [ -n "${{ matrix.enable }}" ]; then
               echo "- **Macros enabled:** \`${{ matrix.enable }}\`" >> $GITHUB_STEP_SUMMARY
