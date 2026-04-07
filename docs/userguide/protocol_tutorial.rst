@@ -961,7 +961,80 @@ This restores the normal FDCAN peripheral and resumes standard GS_USB operation.
 
 	While in ``bb gsusb`` mode, the bitbang timing parameters (``prescaler``, ``bit_quanta``, ``sampling_quanta``) configured via ``bb set`` are used. Make sure they match the CAN bus baud rate before entering the mode.
 
-	  
+.. _bb_sump_gsusb_workflow:
+
+Combined Workflow: Bitbang, SUMP, and GS_USB
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+This section describes the full user flow for using the bitbang module, the SUMP logic analyzer, and the GS_USB bridge together, including how GS_USB behaves at each stage.
+
+GS_USB Behavior Summary
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+- **Normal operation** (default): GS_USB uses the FDCAN peripheral. The host sees CAN frames through SocketCAN as usual.
+- **During** ``bb`` **commands** (``bb read``, ``bb dump``, ``bb deny``, etc.): ECU A reconfigures its CAN pins to GPIO for bitbanging. The FDCAN peripheral is temporarily disabled. GS_USB continues to run on the host side, but no frames are forwarded during the bitbang operation because the FDCAN peripheral is inactive.  When the ``bb`` command completes, the FDCAN peripheral is restored and GS_USB resumes normal operation automatically.
+- **During** ``bb gsusb``: GS_USB frames are routed through the bitbang engine instead of FDCAN. The host still uses SocketCAN tools (``candump``, ``cansend``) transparently, but the actual TX/RX happens via GPIO bitbanging. When you exit with ESC, FDCAN is restored and GS_USB returns to normal FDCAN-based operation.
+- **During** ``sump`` **mode**: The device processes SUMP protocol commands (from PulseView) instead of normal CLI or slcan traffic. GS_USB is not affected by SUMP mode itself — SUMP only changes how the USB serial data stream is interpreted. However, since you cannot run ``bb`` commands while in SUMP mode, no new bitbang captures occur.
+
+Full Iterative Workflow
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+A typical debugging session using all three features looks like this:
+
+1. **Enter CLI mode.** Open a serial terminal and type ``#`` to enter the CLI.
+
+2. **Configure the bitbang trigger.** Set the trigger condition and timeout for the activity you want to capture:
+
+   .. code-block:: text
+
+   	bb set trig 024
+   	bb set timeout 5000
+
+3. **Run a bitbang command.** Execute the bitbang operation (e.g., read, dump, denyonce):
+
+   .. code-block:: text
+
+   	bb read
+
+   This captures CAN bus activity into the SUMP sample buffer. The bitbang trigger point is recorded. GS_USB is temporarily unavailable while the bitbang command runs, but resumes when it completes.
+
+4. **View the capture in PulseView.** Open PulseView and connect to RAMN's serial port (using *Openbench Logic Sniffer & SUMP compatibles*). Click *Run* to fetch the pre-recorded samples. PulseView's auto-detection will enter SUMP mode automatically.
+
+   Alternatively, type ``sump`` in the CLI to enter SUMP mode manually before opening PulseView.
+
+5. **Analyze the data.** Use PulseView's protocol decoders and zoom to inspect the CAN TX, CAN RX, and TRIG channels.
+
+6. **Exit SUMP mode.** Press ESC in your serial terminal. This returns to the CLI (or slcan mode, depending on how SUMP was entered). GS_USB was not affected during SUMP mode, and normal CLI operation resumes.
+
+7. **Adjust and repeat.** Reconfigure the trigger if needed (``bb set trig ...``), run another ``bb`` command, and fetch the new capture in PulseView. Each ``bb`` command resets the sample buffer.
+
+8. **Exit.** When done, you can simply close the serial terminal. No special exit command is needed — the device returns to its default mode.
+
+Using GS_USB Bridge in the Workflow
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If you want to use SocketCAN tools (``candump``, ``cansend``) to generate or monitor traffic while capturing with bitbang, use the ``bb gsusb`` mode:
+
+1. **Enter** ``bb gsusb`` **mode.** From the CLI:
+
+   .. code-block:: text
+
+   	bb gsusb
+
+   GS_USB frames are now routed through the bitbang engine. All CAN bus activity (TX and RX) is recorded into the SUMP sample buffer automatically.
+
+2. **Use SocketCAN tools.** On the host, use ``candump can0`` to monitor or ``cansend can0 024#DEADBEEF`` to transmit. Frames are sent/received via bitbanging.
+
+3. **Exit** ``bb gsusb`` **mode.** Press ESC. GS_USB returns to normal FDCAN-based operation.
+
+4. **View the capture.** Enter SUMP mode (``sump`` or let PulseView auto-detect) and click *Run* in PulseView to see the captured bitstream from the ``bb gsusb`` session.
+
+5. **Repeat.** Re-enter ``bb gsusb``, generate more traffic, exit, and view in PulseView again.
+
+.. note::
+
+	Each ``bb`` command (including ``bb gsusb``) resets the SUMP sample buffer at the start of each operation (each TX or RX frame within ``bb gsusb``). To capture the full session, be aware that only the most recent 4096 samples are preserved.
+
 Protocol Level Attacks
 ----------------------
 
