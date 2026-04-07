@@ -118,11 +118,6 @@ jobs:
       - name: checkout
         uses: actions/checkout@v4
 
-      - name: Save original config
-        run: |
-          cp firmware/RAMNV1/Core/Inc/ramn_config.h firmware/RAMNV1/Core/Inc/ramn_config.h.orig
-          cp firmware/RAMNV1/Core/Inc/FreeRTOSConfig.h firmware/RAMNV1/Core/Inc/FreeRTOSConfig.h.orig
-
       - name: Modify ramn_config.h
         run: |
           python3 .github/modify_config.py \
@@ -131,39 +126,13 @@ jobs:
             --enable "${{ matrix.enable }}" \
             --disable "${{ matrix.disable }}"
 
-      - name: Build all ECUs (${{ matrix.variant }})
+      - name: Macro-testing build all ECUs (${{ matrix.variant }})
         id: build
         continue-on-error: true
         run: |
           set -o pipefail
-          chmod +x scripts/build/_build_ecu.sh
-          source scripts/build/_version.sh
-          VARIANT_ECU="${{ matrix.ecu }}"
-          docker run --rm -e STM32_IMPORT_FLAG -v "$(pwd)":/workspace xanderhendriks/stm32cubeide:${DOCKER_STM32CUBEIDE_TAG} bash -c '
-            set -e
-            VARIANT_ECU="'"${VARIANT_ECU}"'"
-            VARIANT_ECU_NAME="${VARIANT_ECU#TARGET_}"
-            OUTPUT_FOLDER="/workspace/scripts/firmware"
-            PROJECT_NAME=RAMNV1
-            mkdir -p "${OUTPUT_FOLDER}"
-
-            # Build the variant ECU first (includes project import)
-            bash /workspace/scripts/build/_build_ecu.sh "${VARIANT_ECU}" Release --no-quiet
-            cp -pr "/workspace/firmware/${PROJECT_NAME}/Release/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/${VARIANT_ECU_NAME}.hex"
-
-            # Restore original config for the remaining default ECUs
-            cp /workspace/firmware/RAMNV1/Core/Inc/ramn_config.h.orig /workspace/firmware/RAMNV1/Core/Inc/ramn_config.h
-            cp /workspace/firmware/RAMNV1/Core/Inc/FreeRTOSConfig.h.orig /workspace/firmware/RAMNV1/Core/Inc/FreeRTOSConfig.h
-
-            # Build remaining ECUs with default config
-            for target_ecu in TARGET_ECUA TARGET_ECUB TARGET_ECUC TARGET_ECUD; do
-              if [ "${target_ecu}" != "${VARIANT_ECU}" ]; then
-                ecu_name="${target_ecu#TARGET_}"
-                bash /workspace/scripts/build/_build_ecu.sh "${target_ecu}" Release --skip-import --no-quiet
-                cp -pr "/workspace/firmware/${PROJECT_NAME}/Release/${PROJECT_NAME}.hex" "${OUTPUT_FOLDER}/${ecu_name}.hex"
-              fi
-            done
-          ' 2>&1 | tee build-output.log
+          chmod +x scripts/build/docker_BUILD_Clean_Release.sh scripts/build/_build_ecu.sh
+          bash scripts/build/docker_BUILD_Clean_Release.sh --no-quiet 2>&1 | tee build-output.log
 
       - name: Collect build results
         if: always()
@@ -175,14 +144,14 @@ jobs:
             echo "enable=${{ matrix.enable }}"
             echo "disable=${{ matrix.disable }}"
             echo "outcome=${{ steps.build.outcome }}"
-            ecu_name="${{ matrix.ecu }}"
-            ecu_name="${ecu_name#TARGET_}"
-            hex="scripts/firmware/${ecu_name}.hex"
-            if [ -f "$hex" ]; then
-              echo "hex_size=$(wc -c < "$hex" | tr -d ' ')"
-            else
-              echo "hex_size=N/A"
-            fi
+            for ecu in ECUA ECUB ECUC ECUD; do
+              hex="scripts/firmware/${ecu}.hex"
+              if [ -f "$hex" ]; then
+                echo "hex_size_${ecu}=$(wc -c < "$hex" | tr -d ' ')"
+              else
+                echo "hex_size_${ecu}=N/A"
+              fi
+            done
             if [ -f build-output.log ]; then
               warn_count=$(grep -ci 'warning:' build-output.log || true)
             else
@@ -195,7 +164,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: macro-results-${{ matrix.ecu }}-${{ matrix.variant }}
+          name: macro-results-${{ matrix.variant }}
           path: macro-results/
 
       - name: Upload firmware
