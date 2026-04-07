@@ -18,6 +18,10 @@
 
 #ifdef ENABLE_GSUSB
 
+// Flag indicating whether bb mode is active for GS_USB.
+// Default is False: normal FDCAN-based GS_USB operations.
+volatile RAMN_Bool_t RAMN_GSUSB_BBMode = False;
+
 RAMN_Result_t RAMN_GSUSB_ProcessRX(FDCAN_RxHeaderTypeDef *canRxHeader, uint8_t *canRxData)
 {
 	RAMN_Result_t         ret;

@@ -24,6 +24,11 @@
 
 #include "gs_usb_fdcan.h"
 
+// When True, GS_USB frames are routed through bitbang instead of FDCAN.
+// Set by the 'bb gsusb' CLI command; cleared on exit.
+// Before this flag is set, GS_USB operates normally via the FDCAN peripheral.
+extern volatile RAMN_Bool_t RAMN_GSUSB_BBMode;
+
 // Forwards a CAN message to USB
 RAMN_Result_t RAMN_GSUSB_ProcessRX(FDCAN_RxHeaderTypeDef *canRxHeader, uint8_t *canRxData);
 

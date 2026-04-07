@@ -24,6 +24,7 @@
 
 #if defined(ENABLE_GSUSB)
 #include "usbd_gs_usb.h"
+#include "ramn_gsusb.h"
 #include "cmsis_os.h"
 #include "stream_buffer.h"
 #endif
@@ -1441,6 +1442,10 @@ RAMN_Result_t RAMN_BITBANG_GsUsbLoop(void)
 
 	RAMN_USB_SendStringFromTask("Entering bb+GS_USB mode. Press ESC to exit.\r");
 
+	// Set bb mode flag BEFORE disabling FDCAN so the RX callback
+	// stops forwarding FDCAN frames to GS_USB during the transition.
+	RAMN_GSUSB_BBMode = True;
+
 	// Suspend RxTask2 so we exclusively own the GSUSB RecvQueue
 	vTaskSuspend(RAMN_RxTask2Handle);
 
@@ -1596,6 +1601,11 @@ RAMN_Result_t RAMN_BITBANG_GsUsbLoop(void)
 	timeout = saved_timeout;
 
 	vTaskResume(RAMN_RxTask2Handle);
+
+	// Clear bb mode flag AFTER FDCAN is re-enabled and RxTask2 is resumed,
+	// so normal GS_USB operations resume cleanly.
+	RAMN_GSUSB_BBMode = False;
+
 	RAMN_USB_SendStringFromTask("Exited bb+GS_USB mode.\r");
 
 	return RAMN_OK;
