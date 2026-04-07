@@ -738,6 +738,9 @@ RAMN_Bool_t RAMN_CDC_ProcessCLIBuffer(uint8_t* USBRxBuffer, uint32_t commandLeng
 										" bb loopof         - Send a loop of overload frames after trigger message (until timeout)\r"
 										" bb set <p> <v>    - Set parameter. See 'bb show' for list.\r"
 										" bb show           - Show configuration\r"
+#if defined(ENABLE_GSUSB)
+										" bb gsusb          - Bridge GS_USB and bitbang: RX frames via bb are delivered to host, host TX frames are sent via bb. ESC to exit.\r"
+#endif
 										"\rHOW TO USE (see documentation for details)\r\rFirst set a trigger (specific CAN ID /'any'/'idle'/'now') and timeout value with the set command.\rExamples:'bb set trig 024', 'bb set trig any', 'bb set timeout 5000'.\r"
 										"Commands will return when they succeed or when they timeout (trigger timeout or end of loop)."
 										"\r\rCommands 'deny' and 'deny_once' target the bit provided in argument: n=0 -> EOF1 (rx/tx error), n=1 -> EOF0 (tx error), n=2 -> IFS2 (OF), n=3 -> IFS1 (OF), n=4-> IFS0 (OK).\r"
@@ -880,6 +883,12 @@ RAMN_Bool_t RAMN_CDC_ProcessCLIBuffer(uint8_t* USBRxBuffer, uint32_t commandLeng
 							else if (strcmp(token, "show") == 0) {
 								RAMN_BITBANG_Show();
 							}
+
+#if defined(ENABLE_GSUSB)
+							else if (strcmp(token, "gsusb") == 0) {
+								RAMN_BITBANG_GsUsbLoop();
+							}
+#endif
 
 							else {
 								RAMN_USB_SendStringFromTask("Invalid bitbang command. Type 'bitbang help' for help.\r");

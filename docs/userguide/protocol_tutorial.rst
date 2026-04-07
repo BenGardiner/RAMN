@@ -898,6 +898,69 @@ This cleanly returns RAMN to the CLI prompt. No reset is required.
 	If you entered SUMP mode via PulseView's auto-detection (not via the ``sump`` CLI command), RAMN returns to its previous mode (slcan or CLI) when you send ESC.
 	Closing PulseView alone does **not** exit SUMP mode — you must send ESC from a serial terminal.
 
+.. _bb_gsusb_mode:
+
+GS_USB + Bitbang Bridge Mode
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+When the ``ENABLE_GSUSB`` flag is also enabled, RAMN offers a ``bb gsusb`` command that bridges the GS_USB (candlelight) interface with the bitbang module.
+This allows standard Linux SocketCAN tools (such as ``candump``, ``cansend``, and ``python-can``) to interact with the CAN bus through bitbanging instead of the normal FDCAN peripheral.
+
+.. note::
+
+	This mode requires both ``ENABLE_GSUSB`` and ``ENABLE_BITBANG`` to be enabled in the firmware configuration.
+	``ENABLE_GSUSB`` is **not** enabled by default — uncomment it in ``ramn_config.h`` and rebuild the firmware.
+
+How It Works
+~~~~~~~~~~~~
+
+In ``bb gsusb`` mode, RAMN continuously:
+
+1. **Receives CAN frames via bitbang** — the bitbang module monitors the CAN bus and captures any frame it detects. Each captured frame is parsed (ID, DLC, data) and delivered to the GS_USB host as a standard ``gs_host_frame``.
+2. **Transmits CAN frames via bitbang** — when the host sends a CAN frame through the GS_USB interface (e.g., via ``cansend``), RAMN converts it to a raw CAN bitstream (with proper bit stuffing and CRC) and transmits it using GPIO bitbanging.
+
+This is useful for scenarios where you want to use standard CAN tools but need the low-level control that bitbanging provides, for example to test interactions with a CAN bus at a non-standard baud rate.
+
+Entering and Using the Mode
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+1. Connect to RAMN's serial port and enter CLI mode with ``#``.
+
+2. Start the bridge:
+
+   .. code-block:: text
+
+   	bb gsusb
+
+   RAMN will print ``Entering bb+GS_USB mode. Press ESC to exit.``
+
+3. On your host, bring up the GS_USB interface as you normally would (e.g., ``sudo ip link set can0 up type can bitrate 500000``).
+
+4. Use standard tools:
+
+   .. code-block:: bash
+
+   	# Monitor the bus
+   	candump can0
+
+   	# Send a frame via bitbang
+   	cansend can0 024#DEADBEEF
+
+5. Each frame that appears on the CAN bus is captured by the bitbang module and forwarded to the host through GS_USB.
+
+Exiting the Mode
+~~~~~~~~~~~~~~~~
+
+To exit ``bb gsusb`` mode:
+
+- **Press ESC** (ASCII ``0x1B``) in the serial terminal.
+
+This restores the normal FDCAN peripheral and resumes standard GS_USB operation. No reset is required.
+
+.. note::
+
+	While in ``bb gsusb`` mode, the bitbang timing parameters (``prescaler``, ``bit_quanta``, ``sampling_quanta``) configured via ``bb set`` are used. Make sure they match the CAN bus baud rate before entering the mode.
+
 	  
 Protocol Level Attacks
 ----------------------

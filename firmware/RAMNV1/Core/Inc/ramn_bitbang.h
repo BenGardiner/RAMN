@@ -55,5 +55,13 @@ RAMN_Result_t RAMN_BITBANG_DenyOnce(uint8_t n);
 // Same as above, but will loop and repeat (instead of recording the bus)
 RAMN_Result_t RAMN_BITBANG_Deny(uint8_t n);
 
+#if defined(ENABLE_GSUSB)
+// Enter a GS_USB + bitbang bridge mode.
+// CAN frames received via bitbang are delivered to the host through GS_USB.
+// CAN frames sent by the host through GS_USB are transmitted via bitbang.
+// Press ESC to exit.
+RAMN_Result_t RAMN_BITBANG_GsUsbLoop(void);
+#endif
+
 #endif
 #endif /* INC_RAMN_BITBANG_H_ */
