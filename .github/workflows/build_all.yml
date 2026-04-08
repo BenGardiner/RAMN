@@ -273,12 +273,6 @@ jobs:
           name: firmware-default-Release
           path: dl/default
 
-      - name: Download gsusb Release firmware
-        uses: actions/download-artifact@v4
-        with:
-          name: firmware-gsusb-Release
-          path: dl/gsusb
-
       - name: Download macro-coverage variant firmware
         uses: actions/download-artifact@v4
         with:
@@ -290,18 +284,12 @@ jobs:
           # Default Release → scripts/firmware/ (root)
           cp dl/default/*.hex scripts/firmware/
 
-          # gsusb from build_all → scripts/firmware/gsusb/
-          mkdir -p scripts/firmware/gsusb
-          cp dl/gsusb/*.hex scripts/firmware/gsusb/
-
-          # macro-coverage variants → scripts/firmware/<variant>/
+          # All variants (including gsusb) → scripts/firmware/<variant>/
           if [ -d dl/variants ]; then
             for dir in dl/variants/firmware-variant-*/; do
               [ -d "$dir" ] || continue
               variant="${dir##*/}"                       # firmware-variant-kwp
               variant="${variant#firmware-variant-}"     # kwp
-              # Skip gsusb – already handled from build_all above
-              [ "$variant" = "gsusb" ] && continue
               mkdir -p "scripts/firmware/${variant}"
               cp "$dir"*.hex "scripts/firmware/${variant}/"
             done
