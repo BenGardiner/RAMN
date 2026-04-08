@@ -391,10 +391,10 @@
 #endif
 
 #if defined(ENABLE_UART) && defined(ENABLE_CDC)
-// UART and CDC share the same task and cannot coexist. Automatically disable UART when CDC is active.
+#error Default code does not support UART and CDC (USB Serial) at the same time. See comments for details.
+// UART uses CDC task by default, and therefore CDC and UART cannot be used at the same time.
 // You can enable both simultaneously by creating new receive/transmit tasks for UART, and move the UART code (between #define ENABLE_UART) in RAMN_ReceiveUSBFunc and RAMN_SendUSBFunc there.
 // You should then modify HAL_UART_TxCpltCallback and HAL_UART_RxCpltCallback to notify these tasks instead.
-#undef ENABLE_UART
 #endif
 
 #if defined(ENABLE_CHIP8) && !defined(ENABLE_SCREEN)
