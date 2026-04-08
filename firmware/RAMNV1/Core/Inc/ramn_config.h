@@ -347,6 +347,14 @@
 #define CAN_TX_BUFFER_SIZE 				15000
 #define UDS_ISOTP_RX_BUFFER_SIZE 		0xFFF+2 //Add +2 for buffer-size
 #define UDS_ISOTP_TX_BUFFER_SIZE 		0xFFF+2
+#ifdef ENABLE_KWP
+#define KWP_ISOTP_RX_BUFFER_SIZE 		(4097*6)
+#define KWP_ISOTP_TX_BUFFER_SIZE 		(4097*6)
+#endif
+#ifdef ENABLE_XCP
+#define XCP_RX_BUFFER_SIZE 				(4000)
+#define XCP_TX_BUFFER_SIZE 				(4000)
+#endif
 
 #else
 #define CAN_RX_BUFFER_SIZE 				20480
@@ -383,10 +391,10 @@
 #endif
 
 #if defined(ENABLE_UART) && defined(ENABLE_CDC)
-#error Default code does not support UART and CDC (USB Serial) at the same time. See comments for details.
-// UART uses CDC task by default, and therefore CDC and UART cannot be used at the same time.
+// UART and CDC share the same task and cannot coexist. Automatically disable UART when CDC is active.
 // You can enable both simultaneously by creating new receive/transmit tasks for UART, and move the UART code (between #define ENABLE_UART) in RAMN_ReceiveUSBFunc and RAMN_SendUSBFunc there.
 // You should then modify HAL_UART_TxCpltCallback and HAL_UART_RxCpltCallback to notify these tasks instead.
+#undef ENABLE_UART
 #endif
 
 #if defined(ENABLE_CHIP8) && !defined(ENABLE_SCREEN)
