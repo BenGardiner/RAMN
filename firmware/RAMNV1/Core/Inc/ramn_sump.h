@@ -97,7 +97,12 @@
 #define SUMP_BIT_TRIG  0x04   // Bit 2: Trigger marker
 
 // SUMP FLAGS register bits
-#define SUMP_FLAG_RLE  0x0100   // Bit 8: Enable RLE compression
+#define SUMP_FLAG_DEMUX        0x0001   // Bit 0: Demux mode
+#define SUMP_FLAG_CHANGRP_1    0x0004   // Bit 2: Disable channel group 1 (channels 0-7)
+#define SUMP_FLAG_CHANGRP_2    0x0008   // Bit 3: Disable channel group 2 (channels 8-15)
+#define SUMP_FLAG_CHANGRP_3    0x0010   // Bit 4: Disable channel group 3 (channels 16-23)
+#define SUMP_FLAG_CHANGRP_4    0x0020   // Bit 5: Disable channel group 4 (channels 24-31)
+#define SUMP_FLAG_RLE          0x0100   // Bit 8: Enable RLE compression
 
 // SUMP RLE marker: MSB of the 4-byte sample group set means RLE count
 #define SUMP_RLE_MARKER  0x80   // Set on byte[3] of a 4-byte RLE count word
@@ -126,6 +131,7 @@ typedef struct {
     uint32_t trigger_mask[4];   // Trigger masks (4 stages)
     uint32_t trigger_values[4]; // Trigger values (4 stages)
     uint32_t flags;             // Channel flags
+    uint8_t  sample_width;      // Bytes per sample (1-4), derived from FLAGS channel group mask
     SUMP_State_t state;         // Current state machine state
 } SUMP_Config_t;
 

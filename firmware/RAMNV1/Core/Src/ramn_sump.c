@@ -101,24 +101,61 @@ static void SUMP_SendMetadata(void)
 
 // ---- Send Pre-Recorded Samples (windowed around trigger) ----
 
-// Helper: emit a single 4-byte SUMP sample word (no RLE)
+// Helper: emit a single sample word using the current sample width.
+// With 3 probes PulseView typically enables only channel group 1 (byte 0),
+// so sample_width = 1 and only one byte is sent per sample.
 static inline void SUMP_EmitSample(uint8_t sample)
 {
+    uint8_t sw = sump_cfg.sample_width;
     uint8_t buf[4] = {sample, 0, 0, 0};
-    SUMP_SendBytes(buf, 4U);
+    SUMP_SendBytes(buf, sw);
 }
 
-// Helper: emit a 4-byte SUMP RLE repeat count word.
-// The repeat count is encoded as a 31-bit value with bit 31 (MSB of byte[3]) set.
-// The count means "repeat the previous sample this many additional times".
+// Helper: emit an RLE repeat-count word using the current sample width.
+// The MSB of the last byte is set to distinguish counts from samples.
+// Maximum representable count depends on sample width:
+//   1 byte  → 7 bits  → 0-127
+//   2 bytes → 15 bits → 0-32767
+//   3 bytes → 23 bits → 0-8388607
+//   4 bytes → 31 bits → 0-2147483647
 static inline void SUMP_EmitRLECount(uint32_t count)
 {
+    uint8_t sw = sump_cfg.sample_width;
     uint8_t buf[4];
     buf[0] = (uint8_t)(count & 0xFF);
-    buf[1] = (uint8_t)((count >> 8) & 0xFF);
-    buf[2] = (uint8_t)((count >> 16) & 0xFF);
-    buf[3] = (uint8_t)(((count >> 24) & 0x7F) | SUMP_RLE_MARKER);
-    SUMP_SendBytes(buf, 4U);
+    if (sw >= 2) buf[1] = (uint8_t)((count >> 8) & 0xFF);
+    if (sw >= 3) buf[2] = (uint8_t)((count >> 16) & 0xFF);
+    if (sw >= 4) buf[3] = (uint8_t)((count >> 24) & 0x7F);
+    // Set RLE marker (MSB) on the last byte
+    buf[sw - 1] |= SUMP_RLE_MARKER;
+    SUMP_SendBytes(buf, sw);
+}
+
+// Maximum RLE count for the current sample width.
+static inline uint32_t SUMP_MaxRLECount(void)
+{
+    switch (sump_cfg.sample_width)
+    {
+    case 1:  return 0x7FU;
+    case 2:  return 0x7FFFU;
+    case 3:  return 0x7FFFFFU;
+    default: return 0x7FFFFFFFU;
+    }
+}
+
+// Compute sample width (bytes per sample) from the FLAGS register.
+// FLAGS bits 2-5 are channel group disable flags (1 = disabled).
+// Each enabled group adds 1 byte to the sample width.
+static uint8_t SUMP_ComputeSampleWidth(uint32_t flags)
+{
+    uint8_t width = 0;
+    if (!(flags & SUMP_FLAG_CHANGRP_1)) width++;
+    if (!(flags & SUMP_FLAG_CHANGRP_2)) width++;
+    if (!(flags & SUMP_FLAG_CHANGRP_3)) width++;
+    if (!(flags & SUMP_FLAG_CHANGRP_4)) width++;
+    // Safety: at least 1 byte (if all groups somehow disabled, default to 1)
+    if (width == 0) width = 1;
+    return width;
 }
 
 static void SUMP_SendCapturedSamples(void)
@@ -151,17 +188,30 @@ static void SUMP_SendCapturedSamples(void)
     // If no samples captured yet, send all-recessive (both pins high, no trigger)
     if (available == 0)
     {
+        uint8_t idle = SUMP_BIT_TX | SUMP_BIT_RX;
         if (rle_enabled == True && read_count > 1)
         {
-            // Emit one idle sample + RLE count for the rest
-            SUMP_EmitSample(SUMP_BIT_TX | SUMP_BIT_RX);
-            SUMP_EmitRLECount(read_count - 1);
+            // Emit one idle sample + RLE counts (split at max boundary)
+            uint32_t max_rle = SUMP_MaxRLECount();
+            uint32_t pad = read_count - 1;
+            SUMP_EmitSample(idle);
+            while (pad > 0)
+            {
+                uint32_t batch = (pad > max_rle) ? max_rle : pad;
+                SUMP_EmitRLECount(batch);
+                pad -= batch;
+                if (pad > 0)
+                {
+                    SUMP_EmitSample(idle);
+                    pad--;
+                }
+            }
         }
         else
         {
             for (uint32_t i = 0; i < read_count; i++)
             {
-                SUMP_EmitSample(SUMP_BIT_TX | SUMP_BIT_RX);
+                SUMP_EmitSample(idle);
             }
         }
         return;
@@ -206,7 +256,9 @@ static void SUMP_SendCapturedSamples(void)
     // SUMP protocol: send samples newest-to-oldest (reverse order)
     if (rle_enabled == True)
     {
-        // RLE encoding: compress consecutive identical samples
+        // RLE encoding: compress consecutive identical samples.
+        // The max count per RLE word depends on sample_width (e.g., 127 for 1 byte).
+        uint32_t max_rle = SUMP_MaxRLECount();
         uint32_t idx = end_linear;
         uint32_t sent = 0;
         uint8_t prev_sample = 0xFF; // Invalid initial value
@@ -218,7 +270,7 @@ static void SUMP_SendCapturedSamples(void)
             uint32_t circ_idx = idx & SUMP_SAMPLE_BUFFER_MASK;
             uint8_t sample = RAMN_SUMP_Samples[circ_idx];
 
-            if (sample == prev_sample && run_count < 0x7FFFFFFFU)
+            if (sample == prev_sample && run_count < max_rle)
             {
                 run_count++;
             }
@@ -229,10 +281,19 @@ static void SUMP_SendCapturedSamples(void)
                 {
                     SUMP_EmitRLECount(run_count);
                 }
-                // Emit the new sample
-                SUMP_EmitSample(sample);
-                prev_sample = sample;
-                run_count = 0;
+                if (sample != prev_sample)
+                {
+                    // New distinct sample
+                    SUMP_EmitSample(sample);
+                    prev_sample = sample;
+                    run_count = 0;
+                }
+                else
+                {
+                    // Same sample but hit max count — re-emit sample to start new run
+                    SUMP_EmitSample(sample);
+                    run_count = 0;
+                }
             }
             sent++;
         }
@@ -249,18 +310,24 @@ static void SUMP_SendCapturedSamples(void)
             uint32_t pad_count = read_count - sent;
             uint8_t idle = SUMP_BIT_TX | SUMP_BIT_RX;
 
-            if (prev_sample == idle)
-            {
-                // Continue the existing idle run
-                SUMP_EmitRLECount(pad_count);
-            }
-            else
+            if (prev_sample != idle)
             {
                 // Start a new idle run
                 SUMP_EmitSample(idle);
-                if (pad_count > 1)
+                pad_count--;
+            }
+
+            // Emit RLE counts, splitting at max_rle boundary
+            while (pad_count > 0)
+            {
+                uint32_t batch = (pad_count > max_rle) ? max_rle : pad_count;
+                SUMP_EmitRLECount(batch);
+                pad_count -= batch;
+                if (pad_count > 0)
                 {
-                    SUMP_EmitRLECount(pad_count - 1);
+                    // Re-emit sample for next batch
+                    SUMP_EmitSample(idle);
+                    pad_count--;
                 }
             }
         }
@@ -307,6 +374,7 @@ static RAMN_Bool_t SUMP_ProcessCommand(uint8_t cmd, const uint8_t* params)
         sump_cfg.read_count = SUMP_REPORTED_SAMPLE_MEM;
         sump_cfg.delay_count = SUMP_REPORTED_SAMPLE_MEM;
         sump_cfg.flags = 0;
+        sump_cfg.sample_width = 4;  // Default: all channel groups enabled
         for (int i = 0; i < 4; i++)
         {
             sump_cfg.trigger_mask[i] = 0;
@@ -354,6 +422,7 @@ static RAMN_Bool_t SUMP_ProcessCommand(uint8_t cmd, const uint8_t* params)
                        | ((uint32_t)params[1] << 8)
                        | ((uint32_t)params[2] << 16)
                        | ((uint32_t)params[3] << 24);
+        sump_cfg.sample_width = SUMP_ComputeSampleWidth(sump_cfg.flags);
         break;
 
     default:
@@ -451,6 +520,7 @@ void RAMN_SUMP_Enter(void)
     sump_cfg.read_count = SUMP_REPORTED_SAMPLE_MEM;
     sump_cfg.delay_count = SUMP_REPORTED_SAMPLE_MEM;
     sump_cfg.flags = 0;
+    sump_cfg.sample_width = 4;  // Default: all channel groups enabled
     for (int i = 0; i < 4; i++)
     {
         sump_cfg.trigger_mask[i] = 0;
