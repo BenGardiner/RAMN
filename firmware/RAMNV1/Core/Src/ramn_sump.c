@@ -312,11 +312,13 @@ static RAMN_Bool_t SUMP_ProcessCommand(uint8_t cmd, const uint8_t* params)
         break;
 
     case SUMP_RUN:
-        // If no samples have been captured yet, automatically run a bb read
-        // so PulseView gets real data on the first click.
+        // If no samples have been captured yet, automatically run a silent
+        // bitbang read so PulseView gets real data on the first click.
+        // We use the silent variant to avoid sending text to USB, which
+        // would corrupt PulseView's binary SUMP stream.
         if (RAMN_SUMP_SampleCount == 0)
         {
-            RAMN_BITBANG_Read();
+            RAMN_BITBANG_ReadSilent();
         }
         // Return the (possibly just-captured) bitbang samples
         SUMP_SendCapturedSamples();

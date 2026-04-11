@@ -869,6 +869,42 @@ inline RAMN_Result_t RAMN_BITBANG_Read(void)
 	return RAMN_OK;
 }
 
+// Silent version of RAMN_BITBANG_Read: captures samples into the SUMP buffer
+// without sending any text output to USB.  Used by SUMP_RUN auto-capture so
+// PulseView receives only binary SUMP data.
+inline RAMN_Result_t RAMN_BITBANG_ReadSilent(void)
+{
+	if ((trig == ARBID_TRIGGER_NOW) || (trig == ARBID_TRIGGER_IDLE))
+	{
+		return RAMN_ERROR;
+	}
+
+	BB_Start();
+	BB_SUMP_RESET();
+	__disable_irq();
+
+	TIMEOUT_TIM->CNT = 0;
+
+	if (Trigger() != RAMN_OK)
+	{
+		__enable_irq();
+		BB_Stop();
+		return RAMN_ERROR;
+	}
+	BB_SUMP_MARK_TRIGGER();
+
+	if (BB_ReadUntilEOF() != RAMN_OK)
+	{
+		__enable_irq();
+		BB_Stop();
+		return RAMN_ERROR;
+	}
+
+	__enable_irq();
+	BB_Stop();
+	return RAMN_OK;
+}
+
 __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_Dump(void)
 {
 	uint32_t next_sample;

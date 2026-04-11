@@ -40,6 +40,10 @@ uint32_t RAMN_BITBANG_BusLoad(void);
 // Reads and interpret the first CAN message it reads
 RAMN_Result_t RAMN_BITBANG_Read();
 
+// Silent version of Read: captures samples into the SUMP buffer only,
+// without sending any text output to USB.  Used by SUMP auto-capture.
+RAMN_Result_t RAMN_BITBANG_ReadSilent(void);
+
 // Dump with simple '0' and '1'
 RAMN_Result_t RAMN_BITBANG_Dump(void);
 

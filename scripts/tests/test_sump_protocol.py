@@ -1666,6 +1666,39 @@ class TestSUMPAutoCapture(unittest.TestCase):
         # Should get idle samples without crashing
         self.assertEqual(len(dev.output), 16)
 
+    def test_auto_capture_output_is_pure_binary(self):
+        """Auto-capture must produce ONLY binary SUMP data (no text).
+
+        This mirrors the firmware fix: SUMP_RUN calls RAMN_BITBANG_ReadSilent()
+        (not RAMN_BITBANG_Read()) so no human-readable text like 'Raw',
+        'Destuffed', or CAN frame annotations is sent over USB, which would
+        corrupt PulseView's binary SUMP stream.
+        """
+        def mock_silent_bb_read(device):
+            # Simulates RAMN_BITBANG_ReadSilent: records samples without text
+            device.reset_capture()
+            for _ in range(10):
+                device.record_sample(True, True)
+            device.record_sample(False, True)  # SOF (TX dominant)
+            device.mark_trigger()
+            for _ in range(20):
+                device.record_sample(True, True)
+
+        dev = MockSUMPDevice()
+        dev.auto_capture_callback = mock_silent_bb_read
+        dev.read_count = 32
+        dev.delay_count = 32
+        dev.process_byte(SUMP_RUN)
+
+        # All output bytes must be valid SUMP 4-byte words (no ASCII text)
+        self.assertEqual(len(dev.output) % 4, 0)
+        for i in range(0, len(dev.output), 4):
+            sample_byte = dev.output[i]
+            # Each non-RLE sample byte uses only bits 0-2 (TX, RX, TRIG)
+            if not (dev.output[i + 3] & 0x80):  # Not RLE count
+                self.assertEqual(sample_byte & 0xF8, 0,
+                                 f"Sample at offset {i} has unexpected bits: 0x{sample_byte:02x}")
+
 
 class TestSUMPCLIAutoDetect(unittest.TestCase):
     """Test that SUMP auto-detect works in CLI mode (task 3)."""
