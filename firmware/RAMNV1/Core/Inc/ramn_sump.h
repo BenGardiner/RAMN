@@ -180,6 +180,15 @@ static inline void RAMN_SUMP_ResetCapture(void)
     RAMN_SUMP_TriggerIndex = SUMP_NO_TRIGGER;
 }
 
+// ------- SUMP Mode Flag -------
+
+// True while the firmware is inside RAMN_SUMP_Enter().
+// The CDC ISR checks this flag: when True, ALL received bytes are forwarded
+// raw to the stream buffer (bypassing line-buffering and \r detection).
+// Without this, PulseView's binary SUMP long commands (>= 0x80) get stuck
+// in the CDC line buffer, and SUMP_Enter never receives them.
+extern volatile RAMN_Bool_t RAMN_SUMP_Active;
+
 // ------- Public API -------
 
 // Enter SUMP mode. Processes SUMP binary commands until exit.

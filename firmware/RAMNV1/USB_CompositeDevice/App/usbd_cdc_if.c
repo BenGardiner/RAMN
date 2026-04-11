@@ -28,6 +28,9 @@
 
 /* USER CODE BEGIN INCLUDE */
 #include "ramn_usb.h"
+#if defined(ENABLE_SUMP_OLS) && defined(ENABLE_BITBANG)
+#include "ramn_sump.h"
+#endif
 /* USER CODE END INCLUDE */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -305,6 +308,32 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 	/* USER CODE BEGIN 6 */
 	//USBD_Composite_SetRxBuffer(&hUsbDeviceFS, &Buf[0], 0);
 	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+#if defined(ENABLE_SUMP_OLS) && defined(ENABLE_BITBANG)
+	// SUMP mode: forward the entire USB packet raw to the stream buffer.
+	// PulseView sends binary SUMP commands (0x80+, 0xC0+) that would otherwise
+	// get stuck in the line buffer (they're not < 0x20 and no \r follows).
+	if (RAMN_SUMP_Active == True)
+	{
+		uint16_t rawLen = (uint16_t)*Len;
+		if (rawLen > 0 && USBD_recvBuffer != NULL)
+		{
+			if (xStreamBufferSendFromISR(*USBD_recvBuffer, &rawLen, 2U, NULL) == 2U)
+			{
+				if (xStreamBufferSendFromISR(*USBD_recvBuffer, Buf, rawLen, NULL) == rawLen)
+				{
+					vTaskNotifyGiveFromISR(*USBD_recvTask, &xHigherPriorityTaskWoken);
+					portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+				}
+				else RAMN_USB_Config.USBErrCnt++;
+			}
+			else RAMN_USB_Config.USBErrCnt++;
+		}
+		currentIndex = 0;  // Ensure line buffer is clean when SUMP mode exits
+		USBD_Composite_ReceivePacket(&hUsbDeviceFS, CDC_OUT_EP);
+		return (USBD_OK);
+	}
+#endif
 
 	for(uint32_t i=0; i < *Len; i++)
 	{

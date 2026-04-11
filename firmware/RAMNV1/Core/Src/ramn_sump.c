@@ -19,7 +19,6 @@
 #if defined(ENABLE_SUMP_OLS) && defined(ENABLE_BITBANG)
 
 #include "ramn_usb.h"
-#include "ramn_bitbang.h"
 #include "cmsis_os.h"
 #include "stream_buffer.h"
 
@@ -28,6 +27,10 @@ uint8_t  RAMN_SUMP_Samples[SUMP_SAMPLE_BUFFER_SIZE];
 volatile uint32_t RAMN_SUMP_SampleCount = 0;
 volatile uint32_t RAMN_SUMP_WriteIndex = 0;
 volatile uint32_t RAMN_SUMP_TriggerIndex = SUMP_NO_TRIGGER;
+
+// SUMP mode flag: True while inside RAMN_SUMP_Enter().
+// Checked by the CDC ISR to forward all bytes raw.
+volatile RAMN_Bool_t RAMN_SUMP_Active = False;
 
 // SUMP configuration
 static SUMP_Config_t sump_cfg;
@@ -312,15 +315,11 @@ static RAMN_Bool_t SUMP_ProcessCommand(uint8_t cmd, const uint8_t* params)
         break;
 
     case SUMP_RUN:
-        // If no samples have been captured yet, automatically run a silent
-        // bitbang read so PulseView gets real data on the first click.
-        // We use the silent variant to avoid sending text to USB, which
-        // would corrupt PulseView's binary SUMP stream.
-        if (RAMN_SUMP_SampleCount == 0)
-        {
-            RAMN_BITBANG_ReadSilent();
-        }
-        // Return the (possibly just-captured) bitbang samples
+        // Return the pre-recorded bitbang samples.
+        // If no samples have been captured yet (no prior bb command),
+        // this sends idle (all-recessive) data, which is correct:
+        // the user must first run a bitbang capture command to populate
+        // the SUMP buffer.
         SUMP_SendCapturedSamples();
         break;
 
@@ -346,7 +345,7 @@ static RAMN_Bool_t SUMP_ProcessCommand(uint8_t cmd, const uint8_t* params)
     case SUMP_CNT:
         sump_cfg.read_count  = (((uint32_t)params[1] << 8) | (uint32_t)params[0]) + 1;
         sump_cfg.read_count <<= 2;  // multiply by 4 per SUMP spec
-        sump_cfg.delay_count = ((uint32_t)params[3] << 8) | (uint32_t)params[2];
+        sump_cfg.delay_count = (((uint32_t)params[3] << 8) | (uint32_t)params[2]) + 1;
         sump_cfg.delay_count <<= 2;
         break;
 
@@ -441,6 +440,9 @@ RAMN_Bool_t RAMN_SUMP_IsSUMPProbe(const uint8_t* buffer, uint32_t length)
 
 void RAMN_SUMP_Enter(void)
 {
+    // Signal the CDC ISR to forward all bytes raw (no line-buffering)
+    RAMN_SUMP_Active = True;
+
     // Initialize SUMP state
     sump_cmd_pending = 0;
     sump_cmd_buf_idx = 0;
@@ -501,6 +503,7 @@ void RAMN_SUMP_Enter(void)
 
         if (shouldExit == True)
         {
+            RAMN_SUMP_Active = False;
             return;
         }
     }

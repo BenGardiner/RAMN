@@ -107,8 +107,8 @@ class MockSUMPDevice:
         self.sample_count = 0       # Total samples written (linear counter)
         self.write_index = 0        # Circular buffer write position
         self.trigger_index = SUMP_NO_TRIGGER  # Linear index of trigger
-        # Auto-capture callback (simulates RAMN_BITBANG_Read)
-        self.auto_capture_callback = None
+        # Auto-capture callback removed: SUMP_RUN now just sends whatever
+        # is in the buffer (idle if no prior bitbang capture).
 
     def record_sample(self, tx_high, rx_high):
         """Record a TX+RX sample into the circular sample buffer."""
@@ -316,16 +316,14 @@ class MockSUMPDevice:
         elif cmd == SUMP_XON or cmd == SUMP_XOFF:
             pass  # Flow control: not implemented
         elif cmd == SUMP_RUN:
-            # Auto-capture: if no samples exist, run bb read first
-            if self.sample_count == 0 and self.auto_capture_callback is not None:
-                self.auto_capture_callback(self)
-            self.send_captured_samples()  # Return the (possibly just-captured) samples
+            # Return pre-recorded samples (idle if no prior capture)
+            self.send_captured_samples()
         elif cmd == SUMP_DIV:
             self.divider = params[0] | (params[1] << 8) | (params[2] << 16)
         elif cmd == SUMP_CNT:
             self.read_count = ((params[1] << 8) | params[0]) + 1
             self.read_count <<= 2
-            self.delay_count = (params[3] << 8) | params[2]
+            self.delay_count = ((params[3] << 8) | params[2]) + 1
             self.delay_count <<= 2
         elif cmd == SUMP_FLAGS:
             self.flags = params[0] | (params[1] << 8) | (params[2] << 16) | (params[3] << 24)
@@ -379,7 +377,7 @@ def encode_sump_cnt(read_count, delay_count):
     # Reverse: read_count = ((hi << 8 | lo) + 1) << 2
     # So: (hi << 8 | lo) = (read_count >> 2) - 1
     rc_raw = (read_count >> 2) - 1
-    dc_raw = delay_count >> 2
+    dc_raw = (delay_count >> 2) - 1
     return bytes([
         SUMP_CNT,
         rc_raw & 0xFF, (rc_raw >> 8) & 0xFF,
@@ -667,28 +665,29 @@ class TestSUMPCounts(unittest.TestCase):
     def test_basic_counts(self):
         dev = MockSUMPDevice()
         # read_count_raw = 63 => (63 + 1) << 2 = 256
-        # delay_count_raw = 32 => 32 << 2 = 128
+        # delay_count_raw = 32 => (32 + 1) << 2 = 132
         for b in [SUMP_CNT, 63, 0, 32, 0]:
             dev.process_byte(b)
         self.assertEqual(dev.read_count, 256)
-        self.assertEqual(dev.delay_count, 128)
+        self.assertEqual(dev.delay_count, 132)
 
     def test_minimum_counts(self):
         dev = MockSUMPDevice()
         # read_count_raw = 0 => (0 + 1) << 2 = 4
-        # delay_count_raw = 0 => 0 << 2 = 0
+        # delay_count_raw = 0 => (0 + 1) << 2 = 4
         for b in [SUMP_CNT, 0, 0, 0, 0]:
             dev.process_byte(b)
         self.assertEqual(dev.read_count, 4)
-        self.assertEqual(dev.delay_count, 0)
+        self.assertEqual(dev.delay_count, 4)
 
     def test_maximum_counts(self):
         dev = MockSUMPDevice()
         # read_count_raw = 0xFFFF => (0xFFFF + 1) << 2 = 0x40000
+        # delay_count_raw = 0xFFFF => (0xFFFF + 1) << 2 = 0x40000
         for b in [SUMP_CNT, 0xFF, 0xFF, 0xFF, 0xFF]:
             dev.process_byte(b)
         self.assertEqual(dev.read_count, 0x40000)
-        self.assertEqual(dev.delay_count, 0x3FFFC)
+        self.assertEqual(dev.delay_count, 0x40000)
 
 
 class TestSUMPFlags(unittest.TestCase):
@@ -1617,84 +1616,61 @@ class TestSUMPRLECompression(unittest.TestCase):
         self.assertGreater(len(dev.output), 0)
 
 
-class TestSUMPAutoCapture(unittest.TestCase):
-    """Test auto-capture: SUMP_RUN with no samples triggers bb read."""
+class TestSUMPRunNoAutoCapture(unittest.TestCase):
+    """Test that SUMP_RUN sends idle data when no samples have been captured.
 
-    def test_auto_capture_called_when_no_samples(self):
-        """If sample_count=0 and callback set, SUMP_RUN calls auto_capture."""
-        called = []
-        def mock_bb_read(device):
-            called.append(True)
-            # Simulate bb read: record a few samples
-            device.reset_capture()
-            device.record_sample(True, True)
-            device.record_sample(False, True)
-            device.mark_trigger()
+    Auto-capture (ReadSilent) was removed because it blocked with interrupts
+    disabled and could hang/crash if the bus was in a bad state after bb jam.
+    SUMP_RUN now always sends whatever is in the buffer — idle if empty.
+    """
 
+    def test_run_no_samples_sends_idle(self):
+        """SUMP_RUN with no samples sends idle (all-recessive) data."""
         dev = MockSUMPDevice()
-        dev.auto_capture_callback = mock_bb_read
         dev.read_count = 4
         dev.delay_count = 4
-        dev.process_byte(SUMP_RUN)
-        self.assertEqual(len(called), 1)
-        # Should have gotten actual samples, not just idle
-        self.assertGreater(len(dev.output), 0)
-        # First sample byte should be 0x02 (newest = False,True)
-        # since we have trigger bit on sample 1 (mark_trigger after second)
-        self.assertEqual(dev.output[0], SUMP_BIT_RX | SUMP_BIT_TRIG)
-
-    def test_auto_capture_not_called_when_samples_exist(self):
-        """If samples already recorded, callback is NOT called."""
-        called = []
-        def mock_bb_read(device):
-            called.append(True)
-
-        dev = MockSUMPDevice()
-        dev.auto_capture_callback = mock_bb_read
-        dev.reset_capture()
-        dev.record_sample(True, True)
-        dev.read_count = 4
-        dev.delay_count = 4
-        dev.process_byte(SUMP_RUN)
-        self.assertEqual(len(called), 0)
-
-    def test_auto_capture_not_called_without_callback(self):
-        """If no callback set, SUMP_RUN with no samples just sends idle."""
-        dev = MockSUMPDevice()
-        dev.read_count = 4
         dev.process_byte(SUMP_RUN)
         # Should get idle samples without crashing
         self.assertEqual(len(dev.output), 16)
+        # All sample bytes should be idle (TX=1, RX=1 → 0x03)
+        for i in range(0, 16, 4):
+            self.assertEqual(dev.output[i], SUMP_BIT_TX | SUMP_BIT_RX)
 
-    def test_auto_capture_output_is_pure_binary(self):
-        """Auto-capture must produce ONLY binary SUMP data (no text).
-
-        This mirrors the firmware fix: SUMP_RUN calls RAMN_BITBANG_ReadSilent()
-        (not RAMN_BITBANG_Read()) so no human-readable text like 'Raw',
-        'Destuffed', or CAN frame annotations is sent over USB, which would
-        corrupt PulseView's binary SUMP stream.
-        """
-        def mock_silent_bb_read(device):
-            # Simulates RAMN_BITBANG_ReadSilent: records samples without text
-            device.reset_capture()
-            for _ in range(10):
-                device.record_sample(True, True)
-            device.record_sample(False, True)  # SOF (TX dominant)
-            device.mark_trigger()
-            for _ in range(20):
-                device.record_sample(True, True)
-
+    def test_run_with_prior_capture_sends_data(self):
+        """SUMP_RUN with prior bb capture sends real sample data."""
         dev = MockSUMPDevice()
-        dev.auto_capture_callback = mock_silent_bb_read
+        dev.reset_capture()
+        dev.record_sample(True, True)   # Idle
+        dev.record_sample(False, True)  # SOF
+        dev.mark_trigger()
+        dev.record_sample(True, True)   # Idle
+        dev.read_count = 4
+        dev.delay_count = 4
+        dev.process_byte(SUMP_RUN)
+        self.assertGreater(len(dev.output), 0)
+        # Output should contain non-idle data (the SOF sample)
+        sample_bytes = [dev.output[i] for i in range(0, len(dev.output), 4)
+                        if not (dev.output[i + 3] & 0x80)]
+        # At least one sample should have TX=0 (SOF bit)
+        self.assertTrue(any((s & SUMP_BIT_TX) == 0 for s in sample_bytes))
+
+    def test_run_output_is_pure_binary(self):
+        """SUMP_RUN output must be valid SUMP 4-byte words (no text)."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        for _ in range(10):
+            dev.record_sample(True, True)
+        dev.record_sample(False, True)
+        dev.mark_trigger()
+        for _ in range(20):
+            dev.record_sample(True, True)
         dev.read_count = 32
         dev.delay_count = 32
         dev.process_byte(SUMP_RUN)
-
-        # All output bytes must be valid SUMP 4-byte words (no ASCII text)
+        # All output bytes must be valid SUMP 4-byte words
         self.assertEqual(len(dev.output) % 4, 0)
         for i in range(0, len(dev.output), 4):
             sample_byte = dev.output[i]
-            # Each non-RLE sample byte uses only bits 0-2 (TX, RX, TRIG)
             if not (dev.output[i + 3] & 0x80):  # Not RLE count
                 self.assertEqual(sample_byte & 0xF8, 0,
                                  f"Sample at offset {i} has unexpected bits: 0x{sample_byte:02x}")
@@ -1703,8 +1679,16 @@ class TestSUMPAutoCapture(unittest.TestCase):
 class TestSUMPCLIAutoDetect(unittest.TestCase):
     """Test that SUMP auto-detect works in CLI mode (task 3)."""
 
-    def _simulate_cdc_receive(self, data):
-        """Simulate CDC_Receive_FS logic. Returns list of forwarded commands."""
+    def _simulate_cdc_receive(self, data, sump_active=False):
+        """Simulate CDC_Receive_FS logic. Returns list of forwarded commands.
+
+        When sump_active is True, simulates the RAMN_SUMP_Active flag:
+        the entire packet is forwarded raw as a single command.
+        """
+        if sump_active:
+            # In SUMP mode: forward entire packet raw
+            return [bytes(data)]
+
         commands = []
         current_buf = bytearray()
 
@@ -1749,6 +1733,44 @@ class TestSUMPCLIAutoDetect(unittest.TestCase):
         cmds = self._simulate_cdc_receive([0x00, 0x00, 0x00, 0x00, 0x00, 0x02])
         self.assertEqual(len(cmds), 1)
         self.assertTrue(self._is_sump_probe(cmds[0]))
+
+    def test_long_commands_blocked_without_sump_active(self):
+        """Without SUMP_Active, long commands (>= 0x80) get stuck in line buffer."""
+        # SUMP_FLAGS (0x82) + 4 param bytes: all are >= 0x20 or >= 0x80
+        data = [0x82, 0x01, 0x00, 0x00, 0x00]
+        cmds = self._simulate_cdc_receive(data, sump_active=False)
+        # Nothing gets forwarded (no \r terminator)
+        self.assertEqual(len(cmds), 0)
+
+    def test_long_commands_forwarded_with_sump_active(self):
+        """With SUMP_Active, ALL bytes are forwarded raw."""
+        data = [0x82, 0x01, 0x00, 0x00, 0x00]
+        cmds = self._simulate_cdc_receive(data, sump_active=True)
+        self.assertEqual(len(cmds), 1)
+        self.assertEqual(cmds[0], bytes(data))
+
+    def test_pulseview_run_sequence_forwarded(self):
+        """PulseView's full Run sequence is forwarded when SUMP_Active."""
+        # Typical PulseView Run: 5x RESET + FLAGS + CNT + RUN
+        data = (
+            [0x00] * 5 +                           # 5x SUMP_RESET
+            [0x82, 0x00, 0x01, 0x00, 0x00] +       # SUMP_FLAGS (RLE enabled)
+            [0x81, 0xFF, 0x00, 0xFF, 0x00] +        # SUMP_CNT
+            [0x01]                                   # SUMP_RUN
+        )
+        cmds = self._simulate_cdc_receive(data, sump_active=True)
+        # Entire packet forwarded as one raw command
+        self.assertEqual(len(cmds), 1)
+        self.assertEqual(len(cmds[0]), len(data))
+
+    def test_sump_run_byte_stuck_without_sump_active(self):
+        """Without SUMP_Active, SUMP_RUN (0x01) gets stuck if preceded by long cmd bytes."""
+        # FLAGS (0x82 + 4 bytes) fills line buffer, then RUN (0x01) can't be
+        # forwarded as control byte because currentIndex != 0.
+        data = [0x82, 0x00, 0x01, 0x00, 0x00, 0x01]
+        cmds = self._simulate_cdc_receive(data, sump_active=False)
+        # No commands forwarded: everything stuck in line buffer
+        self.assertEqual(len(cmds), 0)
 
 
 class TestSUMPFlagsFullWidth(unittest.TestCase):
