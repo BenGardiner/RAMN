@@ -750,6 +750,9 @@ RAMN_Bool_t RAMN_CDC_ProcessCLIBuffer(uint8_t* USBRxBuffer, uint32_t commandLeng
 										" bb loopof         - Send a loop of overload frames after trigger message (until timeout)\r"
 										" bb set <p> <v>    - Set parameter. See 'bb show' for list.\r"
 										" bb show           - Show configuration\r"
+#if defined(ENABLE_SUMP_OLS)
+										" bb vcd            - Print last capture as a compact VCD file (paste into PulseView)\r"
+#endif
 #if defined(ENABLE_GSUSB)
 										" bb gsusb          - Bridge GS_USB and bitbang: RX frames via bb are delivered to host, host TX frames are sent via bb. ESC to exit.\r"
 #endif
@@ -895,6 +898,12 @@ RAMN_Bool_t RAMN_CDC_ProcessCLIBuffer(uint8_t* USBRxBuffer, uint32_t commandLeng
 							else if (strcmp(token, "show") == 0) {
 								RAMN_BITBANG_Show();
 							}
+
+#if defined(ENABLE_SUMP_OLS)
+							else if (strcmp(token, "vcd") == 0) {
+								RAMN_BITBANG_Vcd();
+							}
+#endif
 
 #if defined(ENABLE_GSUSB)
 							else if (strcmp(token, "gsusb") == 0) {

@@ -65,5 +65,13 @@ RAMN_Result_t RAMN_BITBANG_Deny(uint8_t n);
 RAMN_Result_t RAMN_BITBANG_GsUsbLoop(void);
 #endif
 
+#if defined(ENABLE_SUMP_OLS)
+// Print the SUMP circular buffer as a compact VCD file on the serial console.
+// Uses the pre-trigger window (up to SUMP_SAMPLE_BUFFER_SIZE samples ending at the
+// recorded trigger point). The output can be saved to a .vcd file and loaded into
+// PulseView. Only signal changes are emitted for maximum compactness.
+RAMN_Result_t RAMN_BITBANG_Vcd(void);
+#endif
+
 #endif
 #endif /* INC_RAMN_BITBANG_H_ */
