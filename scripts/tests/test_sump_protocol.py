@@ -28,8 +28,10 @@ SUMP_XOFF   = 0x13
 
 # Long commands (1 byte command + 4 bytes parameters)
 SUMP_DIV          = 0x80
-SUMP_CNT          = 0x81
+SUMP_CNT          = 0x81   # Combined read+delay count (original SUMP spec)
 SUMP_FLAGS        = 0x82
+SUMP_DELAYCOUNT   = 0x83   # Separate delay count (sigrok OLS driver)
+SUMP_READCOUNT    = 0x84   # Separate read count (sigrok OLS driver)
 SUMP_TRIG_1       = 0xC0
 SUMP_TRIG_VALS_1  = 0xC1
 SUMP_TRIG_2       = 0xC4
@@ -393,6 +395,12 @@ class MockSUMPDevice:
             self.read_count <<= 2
             self.delay_count = ((params[3] << 8) | params[2]) + 1
             self.delay_count <<= 2
+        elif cmd == SUMP_READCOUNT:
+            self.read_count = ((params[1] << 8) | params[0]) + 1
+            self.read_count <<= 2
+        elif cmd == SUMP_DELAYCOUNT:
+            self.delay_count = ((params[1] << 8) | params[0]) + 1
+            self.delay_count <<= 2
         elif cmd == SUMP_FLAGS:
             self.flags = params[0] | (params[1] << 8) | (params[2] << 16) | (params[3] << 24)
             self.sample_width = self._compute_sample_width(self.flags)
@@ -454,6 +462,32 @@ def encode_sump_cnt(read_count, delay_count):
     ])
 
 
+def encode_sump_readcount(read_count):
+    """Encode a SUMP_READCOUNT (0x84) command with the desired sample count.
+
+    Encoding: raw = (read_count >> 2) - 1, sent as 16-bit little-endian + 2 pad bytes.
+    """
+    rc_raw = (read_count >> 2) - 1
+    return bytes([
+        SUMP_READCOUNT,
+        rc_raw & 0xFF, (rc_raw >> 8) & 0xFF,
+        0, 0,
+    ])
+
+
+def encode_sump_delaycount(delay_count):
+    """Encode a SUMP_DELAYCOUNT (0x83) command with the desired delay count.
+
+    Encoding: raw = (delay_count >> 2) - 1, sent as 16-bit little-endian + 2 pad bytes.
+    """
+    dc_raw = (delay_count >> 2) - 1
+    return bytes([
+        SUMP_DELAYCOUNT,
+        dc_raw & 0xFF, (dc_raw >> 8) & 0xFF,
+        0, 0,
+    ])
+
+
 def encode_sump_flags(flags):
     """Encode a SUMP_FLAGS command (all 4 parameter bytes)."""
     return bytes([SUMP_FLAGS,
@@ -501,6 +535,8 @@ class TestSUMPConstants(unittest.TestCase):
         self.assertEqual(SUMP_DIV, 0x80)
         self.assertEqual(SUMP_CNT, 0x81)
         self.assertEqual(SUMP_FLAGS, 0x82)
+        self.assertEqual(SUMP_DELAYCOUNT, 0x83)
+        self.assertEqual(SUMP_READCOUNT, 0x84)
 
     def test_trigger_command_values(self):
         self.assertEqual(SUMP_TRIG_1, 0xC0)
@@ -526,7 +562,7 @@ class TestSUMPConstants(unittest.TestCase):
     def test_long_command_detection(self):
         """Commands >= 0x80 are long commands (need 4 parameter bytes)."""
         dev = MockSUMPDevice()
-        for cmd in [SUMP_DIV, SUMP_CNT, SUMP_FLAGS, SUMP_TRIG_1, SUMP_TRIG_VALS_4]:
+        for cmd in [SUMP_DIV, SUMP_CNT, SUMP_FLAGS, SUMP_DELAYCOUNT, SUMP_READCOUNT, SUMP_TRIG_1, SUMP_TRIG_VALS_4]:
             self.assertTrue(dev.is_long_command(cmd), f"0x{cmd:02x} should be long")
         for cmd in [SUMP_RESET, SUMP_RUN, SUMP_ID, SUMP_DESC, SUMP_XON, SUMP_XOFF]:
             self.assertFalse(dev.is_long_command(cmd), f"0x{cmd:02x} should be short")
@@ -757,6 +793,127 @@ class TestSUMPCounts(unittest.TestCase):
             dev.process_byte(b)
         self.assertEqual(dev.read_count, 0x40000)
         self.assertEqual(dev.delay_count, 0x40000)
+
+
+class TestSUMPSeparateCounts(unittest.TestCase):
+    """Test the separate SUMP_READCOUNT (0x84) and SUMP_DELAYCOUNT (0x83) commands.
+
+    The sigrok OLS driver sends these instead of the combined SUMP_CNT (0x81).
+    """
+
+    def test_readcount_basic(self):
+        """SUMP_READCOUNT (0x84) sets read_count independently."""
+        dev = MockSUMPDevice()
+        # raw = 3 => (3 + 1) << 2 = 16
+        for b in [SUMP_READCOUNT, 3, 0, 0, 0]:
+            dev.process_byte(b)
+        self.assertEqual(dev.read_count, 16)
+
+    def test_delaycount_basic(self):
+        """SUMP_DELAYCOUNT (0x83) sets delay_count independently."""
+        dev = MockSUMPDevice()
+        # raw = 3 => (3 + 1) << 2 = 16
+        for b in [SUMP_DELAYCOUNT, 3, 0, 0, 0]:
+            dev.process_byte(b)
+        self.assertEqual(dev.delay_count, 16)
+
+    def test_readcount_does_not_affect_delay(self):
+        """SUMP_READCOUNT only changes read_count, not delay_count."""
+        dev = MockSUMPDevice()
+        orig_delay = dev.delay_count
+        for b in [SUMP_READCOUNT, 63, 0, 0, 0]:
+            dev.process_byte(b)
+        self.assertEqual(dev.read_count, 256)
+        self.assertEqual(dev.delay_count, orig_delay)
+
+    def test_delaycount_does_not_affect_read(self):
+        """SUMP_DELAYCOUNT only changes delay_count, not read_count."""
+        dev = MockSUMPDevice()
+        orig_read = dev.read_count
+        for b in [SUMP_DELAYCOUNT, 63, 0, 0, 0]:
+            dev.process_byte(b)
+        self.assertEqual(dev.delay_count, 256)
+        self.assertEqual(dev.read_count, orig_read)
+
+    def test_separate_then_combined(self):
+        """Combined SUMP_CNT overrides both separate values."""
+        dev = MockSUMPDevice()
+        for b in encode_sump_readcount(64):
+            dev.process_byte(b)
+        for b in encode_sump_delaycount(32):
+            dev.process_byte(b)
+        self.assertEqual(dev.read_count, 64)
+        self.assertEqual(dev.delay_count, 32)
+        # Now send combined, which overrides both
+        for b in encode_sump_cnt(128, 96):
+            dev.process_byte(b)
+        self.assertEqual(dev.read_count, 128)
+        self.assertEqual(dev.delay_count, 96)
+
+    def test_sigrok_cli_sequence(self):
+        """Reproduce the exact sigrok-cli command sequence from the bug report.
+
+        sigrok-cli sends: 0xC0, 0xC1, 0xC2, 0x80, 0x84, 0x83, 0x82, 0x01
+        We verify read_count and delay_count are set by 0x84/0x83.
+        """
+        dev = MockSUMPDevice()
+        # 0xC0: trigger mask stage 0 = 0
+        for b in [0xC0, 0, 0, 0, 0]:
+            dev.process_byte(b)
+        # 0xC1: trigger value stage 0 = 0
+        for b in [0xC1, 0, 0, 0, 0]:
+            dev.process_byte(b)
+        # 0xC2: trigger config stage 0 (start flag) - consumed but ignored
+        for b in [0xC2, 0x08, 0, 0, 0]:
+            dev.process_byte(b)
+        # 0x80: divider = 499 (200kHz sample rate)
+        for b in [0x80, 0xF3, 0x01, 0, 0]:
+            dev.process_byte(b)
+        # 0x84: read count raw = 3 => (3+1)*4 = 16 samples
+        for b in [SUMP_READCOUNT, 3, 0, 0, 0]:
+            dev.process_byte(b)
+        # 0x83: delay count raw = 3 => (3+1)*4 = 16
+        for b in [SUMP_DELAYCOUNT, 3, 0, 0, 0]:
+            dev.process_byte(b)
+        # 0x82: flags = 0x3A (groups 2-4 disabled, noise filter on)
+        for b in [SUMP_FLAGS, 0x3A, 0, 0, 0]:
+            dev.process_byte(b)
+
+        self.assertEqual(dev.read_count, 16)
+        self.assertEqual(dev.delay_count, 16)
+        self.assertEqual(dev.sample_width, 1)
+
+    def test_readcount_minimum(self):
+        """Minimum SUMP_READCOUNT: raw=0 => (0+1)*4 = 4."""
+        dev = MockSUMPDevice()
+        for b in [SUMP_READCOUNT, 0, 0, 0, 0]:
+            dev.process_byte(b)
+        self.assertEqual(dev.read_count, 4)
+
+    def test_readcount_maximum(self):
+        """Maximum SUMP_READCOUNT: raw=0xFFFF => (0xFFFF+1)*4 = 0x40000."""
+        dev = MockSUMPDevice()
+        for b in [SUMP_READCOUNT, 0xFF, 0xFF, 0, 0]:
+            dev.process_byte(b)
+        self.assertEqual(dev.read_count, 0x40000)
+
+    def test_encode_readcount_helper(self):
+        """encode_sump_readcount helper produces correct bytes."""
+        data = encode_sump_readcount(16)
+        self.assertEqual(data[0], SUMP_READCOUNT)
+        self.assertEqual(len(data), 5)
+        # Decode: raw = (16 >> 2) - 1 = 3
+        self.assertEqual(data[1], 3)
+        self.assertEqual(data[2], 0)
+
+    def test_encode_delaycount_helper(self):
+        """encode_sump_delaycount helper produces correct bytes."""
+        data = encode_sump_delaycount(256)
+        self.assertEqual(data[0], SUMP_DELAYCOUNT)
+        self.assertEqual(len(data), 5)
+        # Decode: raw = (256 >> 2) - 1 = 63
+        self.assertEqual(data[1], 63)
+        self.assertEqual(data[2], 0)
 
 
 class TestSUMPFlags(unittest.TestCase):

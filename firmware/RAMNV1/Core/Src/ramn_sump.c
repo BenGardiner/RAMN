@@ -411,9 +411,25 @@ static RAMN_Bool_t SUMP_ProcessCommand(uint8_t cmd, const uint8_t* params)
         break;
 
     case SUMP_CNT:
+        // Combined read+delay count (original SUMP spec, 0x81).
+        // bytes[0:1] = read count, bytes[2:3] = delay count.
         sump_cfg.read_count  = (((uint32_t)params[1] << 8) | (uint32_t)params[0]) + 1;
         sump_cfg.read_count <<= 2;  // multiply by 4 per SUMP spec
         sump_cfg.delay_count = (((uint32_t)params[3] << 8) | (uint32_t)params[2]) + 1;
+        sump_cfg.delay_count <<= 2;
+        break;
+
+    case SUMP_READCOUNT:
+        // Separate read count command (sigrok OLS driver, 0x84).
+        // 4-byte little-endian value: (value + 1) * 4 = sample count.
+        sump_cfg.read_count = (((uint32_t)params[1] << 8) | (uint32_t)params[0]) + 1;
+        sump_cfg.read_count <<= 2;
+        break;
+
+    case SUMP_DELAYCOUNT:
+        // Separate delay count command (sigrok OLS driver, 0x83).
+        // 4-byte little-endian value: (value + 1) * 4 = delay sample count.
+        sump_cfg.delay_count = (((uint32_t)params[1] << 8) | (uint32_t)params[0]) + 1;
         sump_cfg.delay_count <<= 2;
         break;
 

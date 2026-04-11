@@ -43,8 +43,10 @@
 
 // Long commands (1 byte command + 4 bytes parameters)
 #define SUMP_DIV          0x80
-#define SUMP_CNT          0x81
+#define SUMP_CNT          0x81   // Combined read+delay count (original SUMP spec)
 #define SUMP_FLAGS        0x82
+#define SUMP_DELAYCOUNT   0x83   // Separate delay count (sigrok OLS driver)
+#define SUMP_READCOUNT    0x84   // Separate read count (sigrok OLS driver)
 #define SUMP_TRIG_1       0xC0
 #define SUMP_TRIG_VALS_1  0xC1
 #define SUMP_TRIG_2       0xC4
