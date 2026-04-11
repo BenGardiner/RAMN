@@ -90,6 +90,18 @@ RAMN_Bool_t RAMN_CDC_ProcessCLIBuffer(uint8_t* USBRxBuffer, uint32_t commandLeng
 	// Command is in USBRxBuffer, length is in commandLength. There is no endline in buffer.
 	RAMN_Bool_t mustSwitch = False; //return value, set to True if device should switch to slcan mode
 
+#if defined(ENABLE_SUMP_OLS) && defined(ENABLE_BITBANG)
+	// SUMP auto-detect: PulseView sends SUMP_ID (0x02) as a probe.
+	// The CDC ISR forwards this as a single-byte command. Detect it and enter SUMP mode
+	// so PulseView's "scan for devices" works even when in CLI mode.
+	if (RAMN_SUMP_IsSUMPProbe(USBRxBuffer, commandLength) == True)
+	{
+		RAMN_USB_SendFromTask((const uint8_t*)"1ALS", 4U);
+		RAMN_SUMP_Enter();
+		return False;
+	}
+#endif
+
 	// Zero terminate the USB command buffer
 	USBRxBuffer[commandLength] = '\0';
 

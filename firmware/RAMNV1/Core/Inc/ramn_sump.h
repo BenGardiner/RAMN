@@ -76,6 +76,11 @@
 // Mask for circular buffer index wrap-around (buffer_size - 1).
 #define SUMP_SAMPLE_BUFFER_MASK  (SUMP_SAMPLE_BUFFER_SIZE - 1)
 
+// Reported sample memory size. With RLE compression, we can represent
+// far more samples than the physical buffer holds, so we advertise
+// a larger window to PulseView (1M samples).
+#define SUMP_REPORTED_SAMPLE_MEM  1048576
+
 // Sample rate reported to PulseView. This is a nominal value;
 // actual sample rate depends on the bitbang bit_quanta setting.
 #define SUMP_MAX_SAMPLE_RATE     1000000
@@ -90,6 +95,12 @@
 #define SUMP_BIT_TX    0x01   // Bit 0: CAN TX
 #define SUMP_BIT_RX    0x02   // Bit 1: CAN RX
 #define SUMP_BIT_TRIG  0x04   // Bit 2: Trigger marker
+
+// SUMP FLAGS register bits
+#define SUMP_FLAG_RLE  0x0100   // Bit 8: Enable RLE compression
+
+// SUMP RLE marker: MSB of the 4-byte sample group set means RLE count
+#define SUMP_RLE_MARKER  0x80   // Set on byte[3] of a 4-byte RLE count word
 
 // Special value indicating no trigger has been recorded yet
 #define SUMP_NO_TRIGGER  0xFFFFFFFF

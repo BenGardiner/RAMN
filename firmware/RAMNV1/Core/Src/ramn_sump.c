@@ -19,6 +19,7 @@
 #if defined(ENABLE_SUMP_OLS) && defined(ENABLE_BITBANG)
 
 #include "ramn_usb.h"
+#include "ramn_bitbang.h"
 #include "cmsis_os.h"
 #include "stream_buffer.h"
 
@@ -69,12 +70,12 @@ static void SUMP_SendMetadata(void)
     SUMP_SendByte(SUMP_META_NAME);
     SUMP_SendBytes((const uint8_t*)SUMP_DEVICE_NAME, sizeof(SUMP_DEVICE_NAME)); // includes null terminator
 
-    // Sample memory (4 bytes, big-endian)
+    // Sample memory (4 bytes, big-endian) — report the RLE-inflated window
     SUMP_SendByte(SUMP_META_SAMPLE_MEM);
-    SUMP_SendByte((SUMP_SAMPLE_BUFFER_SIZE >> 24) & 0xFF);
-    SUMP_SendByte((SUMP_SAMPLE_BUFFER_SIZE >> 16) & 0xFF);
-    SUMP_SendByte((SUMP_SAMPLE_BUFFER_SIZE >> 8) & 0xFF);
-    SUMP_SendByte(SUMP_SAMPLE_BUFFER_SIZE & 0xFF);
+    SUMP_SendByte((SUMP_REPORTED_SAMPLE_MEM >> 24) & 0xFF);
+    SUMP_SendByte((SUMP_REPORTED_SAMPLE_MEM >> 16) & 0xFF);
+    SUMP_SendByte((SUMP_REPORTED_SAMPLE_MEM >> 8) & 0xFF);
+    SUMP_SendByte(SUMP_REPORTED_SAMPLE_MEM & 0xFF);
 
     // Max sample rate (4 bytes, big-endian)
     SUMP_SendByte(SUMP_META_SAMPLE_RATE);
@@ -97,6 +98,26 @@ static void SUMP_SendMetadata(void)
 
 // ---- Send Pre-Recorded Samples (windowed around trigger) ----
 
+// Helper: emit a single 4-byte SUMP sample word (no RLE)
+static inline void SUMP_EmitSample(uint8_t sample)
+{
+    uint8_t buf[4] = {sample, 0, 0, 0};
+    SUMP_SendBytes(buf, 4U);
+}
+
+// Helper: emit a 4-byte SUMP RLE repeat count word.
+// The repeat count is encoded as a 31-bit value with bit 31 (MSB of byte[3]) set.
+// The count means "repeat the previous sample this many additional times".
+static inline void SUMP_EmitRLECount(uint32_t count)
+{
+    uint8_t buf[4];
+    buf[0] = (uint8_t)(count & 0xFF);
+    buf[1] = (uint8_t)((count >> 8) & 0xFF);
+    buf[2] = (uint8_t)((count >> 16) & 0xFF);
+    buf[3] = (uint8_t)(((count >> 24) & 0x7F) | SUMP_RLE_MARKER);
+    SUMP_SendBytes(buf, 4U);
+}
+
 static void SUMP_SendCapturedSamples(void)
 {
     uint32_t total_written = RAMN_SUMP_SampleCount;
@@ -108,16 +129,37 @@ static void SUMP_SendCapturedSamples(void)
 
     // Determine how many samples PulseView wants
     uint32_t read_count = sump_cfg.read_count;
-    if (read_count > SUMP_SAMPLE_BUFFER_SIZE) read_count = SUMP_SAMPLE_BUFFER_SIZE;
-    if (read_count == 0) read_count = SUMP_SAMPLE_BUFFER_SIZE;
+    RAMN_Bool_t rle_enabled = (sump_cfg.flags & SUMP_FLAG_RLE) ? True : False;
+
+    // Clamp read_count based on whether RLE is active
+    if (rle_enabled == True)
+    {
+        // With RLE, we can represent up to SUMP_REPORTED_SAMPLE_MEM samples
+        if (read_count > SUMP_REPORTED_SAMPLE_MEM) read_count = SUMP_REPORTED_SAMPLE_MEM;
+        if (read_count == 0) read_count = SUMP_REPORTED_SAMPLE_MEM;
+    }
+    else
+    {
+        // Without RLE, clamp to physical buffer
+        if (read_count > SUMP_SAMPLE_BUFFER_SIZE) read_count = SUMP_SAMPLE_BUFFER_SIZE;
+        if (read_count == 0) read_count = SUMP_SAMPLE_BUFFER_SIZE;
+    }
 
     // If no samples captured yet, send all-recessive (both pins high, no trigger)
     if (available == 0)
     {
-        uint8_t idle_sample[4] = {SUMP_BIT_TX | SUMP_BIT_RX, 0, 0, 0};
-        for (uint32_t i = 0; i < read_count; i++)
+        if (rle_enabled == True && read_count > 1)
         {
-            SUMP_SendBytes(idle_sample, 4U);
+            // Emit one idle sample + RLE count for the rest
+            SUMP_EmitSample(SUMP_BIT_TX | SUMP_BIT_RX);
+            SUMP_EmitRLECount(read_count - 1);
+        }
+        else
+        {
+            for (uint32_t i = 0; i < read_count; i++)
+            {
+                SUMP_EmitSample(SUMP_BIT_TX | SUMP_BIT_RX);
+            }
         }
         return;
     }
@@ -133,24 +175,17 @@ static void SUMP_SendCapturedSamples(void)
     uint32_t delay_count = sump_cfg.delay_count;
     if (delay_count > read_count) delay_count = read_count;
 
-    // Determine the trigger position in the circular buffer
-    // trig_idx is in the linear SampleCount space.
-    // The circular buffer position of sample N is: N & SUMP_SAMPLE_BUFFER_MASK
-    // But we need to handle the case where samples have wrapped.
-    uint32_t end_linear;  // The linear index of the last sample to send (+1)
-    uint32_t start_linear; // The linear index of the first sample to send
+    uint32_t end_linear;
+    uint32_t start_linear;
 
     if (trig_idx != SUMP_NO_TRIGGER && trig_idx <= total_written)
     {
-        // Trigger is valid. Window around it.
         end_linear = trig_idx + delay_count;
-        // Clamp to what's actually written
         if (end_linear > total_written) end_linear = total_written;
         start_linear = (end_linear > read_count) ? (end_linear - read_count) : 0;
     }
     else
     {
-        // No trigger. Send the most recent read_count samples.
         end_linear = total_written;
         start_linear = (total_written > read_count) ? (total_written - read_count) : 0;
     }
@@ -166,31 +201,85 @@ static void SUMP_SendCapturedSamples(void)
     if (send_count > read_count) send_count = read_count;
 
     // SUMP protocol: send samples newest-to-oldest (reverse order)
-    uint8_t buf[4];
-    // First, send samples from end_linear down to start_linear
+    if (rle_enabled == True)
     {
+        // RLE encoding: compress consecutive identical samples
         uint32_t idx = end_linear;
         uint32_t sent = 0;
+        uint8_t prev_sample = 0xFF; // Invalid initial value
+        uint32_t run_count = 0;
+
         while (sent < send_count && idx > start_linear)
         {
             idx--;
             uint32_t circ_idx = idx & SUMP_SAMPLE_BUFFER_MASK;
-            buf[0] = RAMN_SUMP_Samples[circ_idx];
-            buf[1] = 0;
-            buf[2] = 0;
-            buf[3] = 0;
-            SUMP_SendBytes(buf, 4U);
+            uint8_t sample = RAMN_SUMP_Samples[circ_idx];
+
+            if (sample == prev_sample && run_count < 0x7FFFFFFFU)
+            {
+                run_count++;
+            }
+            else
+            {
+                // Flush previous run
+                if (run_count > 0)
+                {
+                    SUMP_EmitRLECount(run_count);
+                }
+                // Emit the new sample
+                SUMP_EmitSample(sample);
+                prev_sample = sample;
+                run_count = 0;
+            }
             sent++;
         }
 
-        // If we need to pad to reach read_count, send idle samples
+        // Flush final run
+        if (run_count > 0)
+        {
+            SUMP_EmitRLECount(run_count);
+        }
+
+        // Pad to reach read_count with idle samples (RLE-compressed)
+        if (sent < read_count)
+        {
+            uint32_t pad_count = read_count - sent;
+            uint8_t idle = SUMP_BIT_TX | SUMP_BIT_RX;
+
+            if (prev_sample == idle)
+            {
+                // Continue the existing idle run
+                SUMP_EmitRLECount(pad_count);
+            }
+            else
+            {
+                // Start a new idle run
+                SUMP_EmitSample(idle);
+                if (pad_count > 1)
+                {
+                    SUMP_EmitRLECount(pad_count - 1);
+                }
+            }
+        }
+    }
+    else
+    {
+        // Non-RLE path: send samples one by one
+        uint32_t idx = end_linear;
+        uint32_t sent = 0;
+
+        while (sent < send_count && idx > start_linear)
+        {
+            idx--;
+            uint32_t circ_idx = idx & SUMP_SAMPLE_BUFFER_MASK;
+            SUMP_EmitSample(RAMN_SUMP_Samples[circ_idx]);
+            sent++;
+        }
+
+        // Pad with idle samples
         while (sent < read_count)
         {
-            buf[0] = SUMP_BIT_TX | SUMP_BIT_RX;  // idle: both recessive, no trigger
-            buf[1] = 0;
-            buf[2] = 0;
-            buf[3] = 0;
-            SUMP_SendBytes(buf, 4U);
+            SUMP_EmitSample(SUMP_BIT_TX | SUMP_BIT_RX);
             sent++;
         }
     }
@@ -212,8 +301,8 @@ static RAMN_Bool_t SUMP_ProcessCommand(uint8_t cmd, const uint8_t* params)
         // Reset internal state (but preserve the captured sample buffer)
         sump_cfg.state = SUMP_STATE_IDLE;
         sump_cfg.divider = 0;
-        sump_cfg.read_count = SUMP_SAMPLE_BUFFER_SIZE;
-        sump_cfg.delay_count = SUMP_SAMPLE_BUFFER_SIZE;
+        sump_cfg.read_count = SUMP_REPORTED_SAMPLE_MEM;
+        sump_cfg.delay_count = SUMP_REPORTED_SAMPLE_MEM;
         sump_cfg.flags = 0;
         for (int i = 0; i < 4; i++)
         {
@@ -223,7 +312,13 @@ static RAMN_Bool_t SUMP_ProcessCommand(uint8_t cmd, const uint8_t* params)
         break;
 
     case SUMP_RUN:
-        // Return the pre-recorded bitbang samples
+        // If no samples have been captured yet, automatically run a bb read
+        // so PulseView gets real data on the first click.
+        if (RAMN_SUMP_SampleCount == 0)
+        {
+            RAMN_BITBANG_Read();
+        }
+        // Return the (possibly just-captured) bitbang samples
         SUMP_SendCapturedSamples();
         break;
 
@@ -254,7 +349,10 @@ static RAMN_Bool_t SUMP_ProcessCommand(uint8_t cmd, const uint8_t* params)
         break;
 
     case SUMP_FLAGS:
-        sump_cfg.flags = (uint32_t)params[0];
+        sump_cfg.flags = (uint32_t)params[0]
+                       | ((uint32_t)params[1] << 8)
+                       | ((uint32_t)params[2] << 16)
+                       | ((uint32_t)params[3] << 24);
         break;
 
     default:
@@ -346,8 +444,8 @@ void RAMN_SUMP_Enter(void)
     sump_cmd_buf_idx = 0;
     sump_cfg.state = SUMP_STATE_IDLE;
     sump_cfg.divider = 0;
-    sump_cfg.read_count = SUMP_SAMPLE_BUFFER_SIZE;
-    sump_cfg.delay_count = SUMP_SAMPLE_BUFFER_SIZE;
+    sump_cfg.read_count = SUMP_REPORTED_SAMPLE_MEM;
+    sump_cfg.delay_count = SUMP_REPORTED_SAMPLE_MEM;
     sump_cfg.flags = 0;
     for (int i = 0; i < 4; i++)
     {

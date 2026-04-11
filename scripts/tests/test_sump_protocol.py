@@ -50,6 +50,7 @@ SUMP_META_END          = 0x00
 # Configuration from ramn_sump.h
 SUMP_SAMPLE_BUFFER_SIZE = 4096
 SUMP_SAMPLE_BUFFER_MASK = SUMP_SAMPLE_BUFFER_SIZE - 1
+SUMP_REPORTED_SAMPLE_MEM = 1048576   # 1M — advertised to PulseView (RLE-inflated)
 SUMP_MAX_SAMPLE_RATE    = 1000000
 SUMP_NUM_PROBES         = 3
 SUMP_EXIT_CHAR          = 0x1B
@@ -64,6 +65,12 @@ SUMP_PIN_TRIG_BIT = 2  # Channel 2: Trigger marker
 SUMP_BIT_TX   = 0x01
 SUMP_BIT_RX   = 0x02
 SUMP_BIT_TRIG = 0x04
+
+# SUMP FLAGS register bits
+SUMP_FLAG_RLE  = 0x0100  # Bit 8: Enable RLE compression
+
+# SUMP RLE marker
+SUMP_RLE_MARKER = 0x80  # Set on byte[3] of a 4-byte RLE count word
 
 # Special value indicating no trigger recorded
 SUMP_NO_TRIGGER = 0xFFFFFFFF
@@ -85,8 +92,8 @@ class MockSUMPDevice:
     def __init__(self):
         self.state = self.STATE_IDLE
         self.divider = 0
-        self.read_count = SUMP_SAMPLE_BUFFER_SIZE
-        self.delay_count = SUMP_SAMPLE_BUFFER_SIZE
+        self.read_count = SUMP_REPORTED_SAMPLE_MEM
+        self.delay_count = SUMP_REPORTED_SAMPLE_MEM
         self.trigger_mask = [0, 0, 0, 0]
         self.trigger_values = [0, 0, 0, 0]
         self.flags = 0
@@ -100,6 +107,8 @@ class MockSUMPDevice:
         self.sample_count = 0       # Total samples written (linear counter)
         self.write_index = 0        # Circular buffer write position
         self.trigger_index = SUMP_NO_TRIGGER  # Linear index of trigger
+        # Auto-capture callback (simulates RAMN_BITBANG_Read)
+        self.auto_capture_callback = None
 
     def record_sample(self, tx_high, rx_high):
         """Record a TX+RX sample into the circular sample buffer."""
@@ -126,22 +135,35 @@ class MockSUMPDevice:
         self.trigger_index = SUMP_NO_TRIGGER
 
     def send_captured_samples(self):
-        """Send pre-recorded samples windowed around the trigger point."""
+        """Send pre-recorded samples windowed around the trigger point.
+        Supports RLE compression when SUMP_FLAG_RLE is set."""
         total_written = self.sample_count
         trig_idx = self.trigger_index
 
         available = min(total_written, SUMP_SAMPLE_BUFFER_SIZE)
+        rle_enabled = bool(self.flags & SUMP_FLAG_RLE)
 
         read_count = self.read_count
-        if read_count > SUMP_SAMPLE_BUFFER_SIZE:
-            read_count = SUMP_SAMPLE_BUFFER_SIZE
-        if read_count == 0:
-            read_count = SUMP_SAMPLE_BUFFER_SIZE
+        if rle_enabled:
+            if read_count > SUMP_REPORTED_SAMPLE_MEM:
+                read_count = SUMP_REPORTED_SAMPLE_MEM
+            if read_count == 0:
+                read_count = SUMP_REPORTED_SAMPLE_MEM
+        else:
+            if read_count > SUMP_SAMPLE_BUFFER_SIZE:
+                read_count = SUMP_SAMPLE_BUFFER_SIZE
+            if read_count == 0:
+                read_count = SUMP_SAMPLE_BUFFER_SIZE
 
         if available == 0:
             # No samples: send all-recessive (TX+RX high, no trigger)
-            for _ in range(read_count):
-                self.output.extend(bytes([SUMP_BIT_TX | SUMP_BIT_RX, 0, 0, 0]))
+            idle = SUMP_BIT_TX | SUMP_BIT_RX
+            if rle_enabled and read_count > 1:
+                self._emit_sample(idle)
+                self._emit_rle_count(read_count - 1)
+            else:
+                for _ in range(read_count):
+                    self._emit_sample(idle)
             return
 
         delay_count = self.delay_count
@@ -167,20 +189,71 @@ class MockSUMPDevice:
         if send_count > read_count:
             send_count = read_count
 
-        # Send newest-to-oldest
-        idx = end_linear
-        sent = 0
-        while sent < send_count and idx > start_linear:
-            idx -= 1
-            circ_idx = idx & SUMP_SAMPLE_BUFFER_MASK
-            s = self.samples[circ_idx]
-            self.output.extend(bytes([s, 0, 0, 0]))
-            sent += 1
+        if rle_enabled:
+            # RLE encoding: compress consecutive identical samples
+            idx = end_linear
+            sent = 0
+            prev_sample = 0xFF  # Invalid initial
+            run_count = 0
 
-        # Pad with idle samples if needed
-        while sent < read_count:
-            self.output.extend(bytes([SUMP_BIT_TX | SUMP_BIT_RX, 0, 0, 0]))
-            sent += 1
+            while sent < send_count and idx > start_linear:
+                idx -= 1
+                circ_idx = idx & SUMP_SAMPLE_BUFFER_MASK
+                sample = self.samples[circ_idx]
+
+                if sample == prev_sample and run_count < 0x7FFFFFFF:
+                    run_count += 1
+                else:
+                    if run_count > 0:
+                        self._emit_rle_count(run_count)
+                    self._emit_sample(sample)
+                    prev_sample = sample
+                    run_count = 0
+                sent += 1
+
+            # Flush final run
+            if run_count > 0:
+                self._emit_rle_count(run_count)
+
+            # Pad to reach read_count with idle samples (RLE-compressed)
+            if sent < read_count:
+                pad_count = read_count - sent
+                idle = SUMP_BIT_TX | SUMP_BIT_RX
+                if prev_sample == idle:
+                    self._emit_rle_count(pad_count)
+                else:
+                    self._emit_sample(idle)
+                    if pad_count > 1:
+                        self._emit_rle_count(pad_count - 1)
+        else:
+            # Non-RLE path: send samples one by one
+            idx = end_linear
+            sent = 0
+            while sent < send_count and idx > start_linear:
+                idx -= 1
+                circ_idx = idx & SUMP_SAMPLE_BUFFER_MASK
+                s = self.samples[circ_idx]
+                self._emit_sample(s)
+                sent += 1
+
+            # Pad with idle samples if needed
+            while sent < read_count:
+                self._emit_sample(SUMP_BIT_TX | SUMP_BIT_RX)
+                sent += 1
+
+    def _emit_sample(self, sample):
+        """Emit a single 4-byte SUMP sample word (no RLE)."""
+        self.output.extend(bytes([sample, 0, 0, 0]))
+
+    def _emit_rle_count(self, count):
+        """Emit a 4-byte SUMP RLE repeat count word.
+        Count means 'repeat previous sample this many additional times'."""
+        self.output.extend(bytes([
+            count & 0xFF,
+            (count >> 8) & 0xFF,
+            (count >> 16) & 0xFF,
+            ((count >> 24) & 0x7F) | SUMP_RLE_MARKER,
+        ]))
 
     @staticmethod
     def is_sump_probe(buffer, length):
@@ -205,9 +278,9 @@ class MockSUMPDevice:
         # Device name
         self.send_byte(SUMP_META_NAME)
         self.send_bytes(SUMP_DEVICE_NAME.encode("ascii") + b"\x00")
-        # Sample memory (big-endian)
+        # Sample memory (big-endian) — report the RLE-inflated window
         self.send_byte(SUMP_META_SAMPLE_MEM)
-        self.send_bytes(struct.pack(">I", SUMP_SAMPLE_BUFFER_SIZE))
+        self.send_bytes(struct.pack(">I", SUMP_REPORTED_SAMPLE_MEM))
         # Max sample rate (big-endian)
         self.send_byte(SUMP_META_SAMPLE_RATE)
         self.send_bytes(struct.pack(">I", SUMP_MAX_SAMPLE_RATE))
@@ -223,8 +296,8 @@ class MockSUMPDevice:
     def reset(self):
         self.state = self.STATE_IDLE
         self.divider = 0
-        self.read_count = SUMP_SAMPLE_BUFFER_SIZE
-        self.delay_count = SUMP_SAMPLE_BUFFER_SIZE
+        self.read_count = SUMP_REPORTED_SAMPLE_MEM
+        self.delay_count = SUMP_REPORTED_SAMPLE_MEM
         self.flags = 0
         for i in range(4):
             self.trigger_mask[i] = 0
@@ -243,7 +316,10 @@ class MockSUMPDevice:
         elif cmd == SUMP_XON or cmd == SUMP_XOFF:
             pass  # Flow control: not implemented
         elif cmd == SUMP_RUN:
-            self.send_captured_samples()  # Return pre-recorded bitbang samples
+            # Auto-capture: if no samples exist, run bb read first
+            if self.sample_count == 0 and self.auto_capture_callback is not None:
+                self.auto_capture_callback(self)
+            self.send_captured_samples()  # Return the (possibly just-captured) samples
         elif cmd == SUMP_DIV:
             self.divider = params[0] | (params[1] << 8) | (params[2] << 16)
         elif cmd == SUMP_CNT:
@@ -252,7 +328,7 @@ class MockSUMPDevice:
             self.delay_count = (params[3] << 8) | params[2]
             self.delay_count <<= 2
         elif cmd == SUMP_FLAGS:
-            self.flags = params[0]
+            self.flags = params[0] | (params[1] << 8) | (params[2] << 16) | (params[3] << 24)
         elif (cmd & 0xF0) == 0xC0:
             stage = (cmd & 0x0C) >> 2
             val = params[0] | (params[1] << 8) | (params[2] << 16) | (params[3] << 24)
@@ -311,9 +387,11 @@ def encode_sump_cnt(read_count, delay_count):
     ])
 
 
-def encode_sump_flags(flags_byte):
-    """Encode a SUMP_FLAGS command."""
-    return bytes([SUMP_FLAGS, flags_byte, 0, 0, 0])
+def encode_sump_flags(flags):
+    """Encode a SUMP_FLAGS command (all 4 parameter bytes)."""
+    return bytes([SUMP_FLAGS,
+                  flags & 0xFF, (flags >> 8) & 0xFF,
+                  (flags >> 16) & 0xFF, (flags >> 24) & 0xFF])
 
 
 def encode_sump_trigger(stage, mask, value):
@@ -397,6 +475,7 @@ class TestSUMPConstants(unittest.TestCase):
     def test_device_configuration(self):
         self.assertEqual(SUMP_SAMPLE_BUFFER_SIZE, 4096)
         self.assertEqual(SUMP_SAMPLE_BUFFER_MASK, 4095)
+        self.assertEqual(SUMP_REPORTED_SAMPLE_MEM, 1048576)
         self.assertEqual(SUMP_MAX_SAMPLE_RATE, 1000000)
         self.assertEqual(SUMP_NUM_PROBES, 3)
         self.assertEqual(SUMP_EXIT_CHAR, 0x1B)
@@ -404,6 +483,8 @@ class TestSUMPConstants(unittest.TestCase):
         self.assertEqual(SUMP_BIT_TX, 0x01)
         self.assertEqual(SUMP_BIT_RX, 0x02)
         self.assertEqual(SUMP_BIT_TRIG, 0x04)
+        self.assertEqual(SUMP_FLAG_RLE, 0x0100)
+        self.assertEqual(SUMP_RLE_MARKER, 0x80)
         self.assertEqual(SUMP_NO_TRIGGER, 0xFFFFFFFF)
 
 
@@ -441,7 +522,7 @@ class TestSUMPMetadata(unittest.TestCase):
         output = bytes(dev.output)
         idx = output.index(SUMP_META_SAMPLE_MEM)
         mem = struct.unpack(">I", output[idx+1:idx+5])[0]
-        self.assertEqual(mem, SUMP_SAMPLE_BUFFER_SIZE)
+        self.assertEqual(mem, SUMP_REPORTED_SAMPLE_MEM)
 
     def test_metadata_contains_sample_rate(self):
         dev = MockSUMPDevice()
@@ -542,8 +623,8 @@ class TestSUMPReset(unittest.TestCase):
         for b in encode_sump_cnt(256, 128):
             dev.process_byte(b)
         dev.process_byte(SUMP_RESET)
-        self.assertEqual(dev.read_count, SUMP_SAMPLE_BUFFER_SIZE)
-        self.assertEqual(dev.delay_count, SUMP_SAMPLE_BUFFER_SIZE)
+        self.assertEqual(dev.read_count, SUMP_REPORTED_SAMPLE_MEM)
+        self.assertEqual(dev.delay_count, SUMP_REPORTED_SAMPLE_MEM)
 
     def test_reset_does_not_produce_output(self):
         dev = MockSUMPDevice()
@@ -815,7 +896,7 @@ class TestSUMPCommandSequence(unittest.TestCase):
         dev.process_byte(SUMP_RESET)
         self.assertEqual(dev.divider, 0)
         self.assertEqual(dev.trigger_mask[0], 0)
-        self.assertEqual(dev.read_count, SUMP_SAMPLE_BUFFER_SIZE)
+        self.assertEqual(dev.read_count, SUMP_REPORTED_SAMPLE_MEM)
 
     def test_multiple_resets_are_safe(self):
         """Sending many resets (as PulseView does) should be safe."""
@@ -1319,10 +1400,10 @@ class TestSUMPPrePostTriggerWindowing(unittest.TestCase):
         self.assertEqual(dev.read_count, 256)
         self.assertEqual(dev.delay_count, 128)
 
-    def test_default_delay_equals_buffer_size(self):
-        """Default delay_count = SUMP_SAMPLE_BUFFER_SIZE (all post-trigger)."""
+    def test_default_delay_equals_reported_sample_mem(self):
+        """Default delay_count = SUMP_REPORTED_SAMPLE_MEM (all post-trigger)."""
         dev = MockSUMPDevice()
-        self.assertEqual(dev.delay_count, SUMP_SAMPLE_BUFFER_SIZE)
+        self.assertEqual(dev.delay_count, SUMP_REPORTED_SAMPLE_MEM)
 
 
 class TestSUMPCDCBinaryForwarding(unittest.TestCase):
@@ -1398,6 +1479,268 @@ class TestSUMPCDCBinaryForwarding(unittest.TestCase):
         cmds = self._simulate_cdc_receive([0x1B])
         self.assertEqual(len(cmds), 1)
         self.assertEqual(cmds[0], bytes([0x1B]))
+
+
+class TestSUMPRLECompression(unittest.TestCase):
+    """Test SUMP RLE (Run-Length Encoding) compression."""
+
+    def test_rle_flag_enables_compression(self):
+        """Setting SUMP_FLAG_RLE enables RLE encoding."""
+        dev = MockSUMPDevice()
+        for b in encode_sump_flags(SUMP_FLAG_RLE):
+            dev.process_byte(b)
+        self.assertEqual(dev.flags & SUMP_FLAG_RLE, SUMP_FLAG_RLE)
+
+    def test_rle_no_samples_compressed(self):
+        """With RLE and no samples, output should be 1 sample + 1 RLE count word."""
+        dev = MockSUMPDevice()
+        for b in encode_sump_flags(SUMP_FLAG_RLE):
+            dev.process_byte(b)
+        dev.read_count = 100
+        dev.process_byte(SUMP_RUN)
+        # Should be exactly 8 bytes: 4-byte sample + 4-byte RLE count
+        self.assertEqual(len(dev.output), 8)
+        # First word: idle sample
+        self.assertEqual(dev.output[0], SUMP_BIT_TX | SUMP_BIT_RX)
+        self.assertEqual(dev.output[3], 0)
+        # Second word: RLE count = 99 (repeat 99 more times)
+        count = dev.output[4] | (dev.output[5] << 8) | (dev.output[6] << 16) | ((dev.output[7] & 0x7F) << 24)
+        self.assertEqual(count, 99)
+        # MSB of byte[7] should be set (RLE marker)
+        self.assertTrue(dev.output[7] & SUMP_RLE_MARKER)
+
+    def test_rle_identical_samples_compressed(self):
+        """Consecutive identical samples are RLE-compressed into sample + count."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        # Write 10 identical samples
+        for _ in range(10):
+            dev.record_sample(True, True)  # 0x03
+        for b in encode_sump_flags(SUMP_FLAG_RLE):
+            dev.process_byte(b)
+        dev.read_count = 10
+        dev.delay_count = 10
+        dev.process_byte(SUMP_RUN)
+        # Should be: 1 sample word + 1 RLE count word = 8 bytes
+        self.assertEqual(len(dev.output), 8)
+        self.assertEqual(dev.output[0], 0x03)
+        count = dev.output[4] | (dev.output[5] << 8) | (dev.output[6] << 16) | ((dev.output[7] & 0x7F) << 24)
+        self.assertEqual(count, 9)  # 9 additional repeats
+
+    def test_rle_alternating_samples_not_compressed(self):
+        """Alternating samples produce no RLE counts."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        dev.record_sample(True, False)   # 0x01
+        dev.record_sample(False, True)   # 0x02
+        dev.record_sample(True, False)   # 0x01
+        dev.record_sample(False, True)   # 0x02
+        for b in encode_sump_flags(SUMP_FLAG_RLE):
+            dev.process_byte(b)
+        dev.read_count = 4
+        dev.delay_count = 4
+        dev.process_byte(SUMP_RUN)
+        # 4 individual samples = 16 bytes (no RLE counts)
+        self.assertEqual(len(dev.output), 16)
+        # Newest first: 0x02, 0x01, 0x02, 0x01
+        self.assertEqual(dev.output[0], 0x02)
+        self.assertEqual(dev.output[4], 0x01)
+        self.assertEqual(dev.output[8], 0x02)
+        self.assertEqual(dev.output[12], 0x01)
+
+    def test_rle_mixed_runs(self):
+        """A mix of runs and unique samples compresses correctly."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        # Write: 3x 0x01, 1x 0x02, 2x 0x01
+        dev.record_sample(True, False)   # 0x01
+        dev.record_sample(True, False)   # 0x01
+        dev.record_sample(True, False)   # 0x01
+        dev.record_sample(False, True)   # 0x02
+        dev.record_sample(True, False)   # 0x01
+        dev.record_sample(True, False)   # 0x01
+        for b in encode_sump_flags(SUMP_FLAG_RLE):
+            dev.process_byte(b)
+        dev.read_count = 6
+        dev.delay_count = 6
+        dev.process_byte(SUMP_RUN)
+        # Newest-to-oldest: 0x01, 0x01, 0x02, 0x01, 0x01, 0x01
+        # RLE: [0x01, RLE(1), 0x02, 0x01, RLE(2)]
+        # = 5 * 4 = 20 bytes
+        self.assertEqual(len(dev.output), 20)
+
+    def test_rle_with_no_flag_produces_raw(self):
+        """Without RLE flag, samples are sent uncompressed."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        for _ in range(10):
+            dev.record_sample(True, True)
+        dev.read_count = 10
+        dev.delay_count = 10
+        dev.process_byte(SUMP_RUN)
+        # 10 individual samples = 40 bytes
+        self.assertEqual(len(dev.output), 40)
+
+    def test_rle_marker_bit_set(self):
+        """RLE count words have the MSB (bit 7 of byte[3]) set."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        for _ in range(5):
+            dev.record_sample(True, True)
+        for b in encode_sump_flags(SUMP_FLAG_RLE):
+            dev.process_byte(b)
+        dev.read_count = 5
+        dev.delay_count = 5
+        dev.process_byte(SUMP_RUN)
+        # First 4 bytes: sample (no RLE marker)
+        self.assertEqual(dev.output[3] & SUMP_RLE_MARKER, 0)
+        # Next 4 bytes: RLE count (RLE marker set)
+        self.assertTrue(dev.output[7] & SUMP_RLE_MARKER)
+
+    def test_rle_large_reported_window(self):
+        """The reported sample memory is 1M (SUMP_REPORTED_SAMPLE_MEM)."""
+        dev = MockSUMPDevice()
+        dev.process_byte(SUMP_DESC)
+        output = bytes(dev.output)
+        idx = output.index(SUMP_META_SAMPLE_MEM)
+        mem = struct.unpack(">I", output[idx+1:idx+5])[0]
+        self.assertEqual(mem, SUMP_REPORTED_SAMPLE_MEM)
+
+    def test_rle_read_count_can_exceed_buffer_size(self):
+        """With RLE, read_count can exceed SUMP_SAMPLE_BUFFER_SIZE."""
+        dev = MockSUMPDevice()
+        for b in encode_sump_flags(SUMP_FLAG_RLE):
+            dev.process_byte(b)
+        dev.read_count = 100000  # Larger than 4096
+        dev.process_byte(SUMP_RUN)
+        # Should produce compressed output without error
+        self.assertGreater(len(dev.output), 0)
+
+
+class TestSUMPAutoCapture(unittest.TestCase):
+    """Test auto-capture: SUMP_RUN with no samples triggers bb read."""
+
+    def test_auto_capture_called_when_no_samples(self):
+        """If sample_count=0 and callback set, SUMP_RUN calls auto_capture."""
+        called = []
+        def mock_bb_read(device):
+            called.append(True)
+            # Simulate bb read: record a few samples
+            device.reset_capture()
+            device.record_sample(True, True)
+            device.record_sample(False, True)
+            device.mark_trigger()
+
+        dev = MockSUMPDevice()
+        dev.auto_capture_callback = mock_bb_read
+        dev.read_count = 4
+        dev.delay_count = 4
+        dev.process_byte(SUMP_RUN)
+        self.assertEqual(len(called), 1)
+        # Should have gotten actual samples, not just idle
+        self.assertGreater(len(dev.output), 0)
+        # First sample byte should be 0x02 (newest = False,True)
+        # since we have trigger bit on sample 1 (mark_trigger after second)
+        self.assertEqual(dev.output[0], SUMP_BIT_RX | SUMP_BIT_TRIG)
+
+    def test_auto_capture_not_called_when_samples_exist(self):
+        """If samples already recorded, callback is NOT called."""
+        called = []
+        def mock_bb_read(device):
+            called.append(True)
+
+        dev = MockSUMPDevice()
+        dev.auto_capture_callback = mock_bb_read
+        dev.reset_capture()
+        dev.record_sample(True, True)
+        dev.read_count = 4
+        dev.delay_count = 4
+        dev.process_byte(SUMP_RUN)
+        self.assertEqual(len(called), 0)
+
+    def test_auto_capture_not_called_without_callback(self):
+        """If no callback set, SUMP_RUN with no samples just sends idle."""
+        dev = MockSUMPDevice()
+        dev.read_count = 4
+        dev.process_byte(SUMP_RUN)
+        # Should get idle samples without crashing
+        self.assertEqual(len(dev.output), 16)
+
+
+class TestSUMPCLIAutoDetect(unittest.TestCase):
+    """Test that SUMP auto-detect works in CLI mode (task 3)."""
+
+    def _simulate_cdc_receive(self, data):
+        """Simulate CDC_Receive_FS logic. Returns list of forwarded commands."""
+        commands = []
+        current_buf = bytearray()
+
+        for byte in data:
+            if byte == ord('\n') or byte == 0:
+                continue
+            elif byte < 0x20 and byte != ord('\r') and len(current_buf) == 0:
+                commands.append(bytes([byte]))
+            elif byte != ord('\r'):
+                current_buf.append(byte)
+            else:
+                if len(current_buf) > 0:
+                    commands.append(bytes(current_buf))
+                current_buf = bytearray()
+
+        return commands
+
+    def _is_sump_probe(self, cmd):
+        """Check if a forwarded command is a SUMP probe."""
+        return len(cmd) == 1 and cmd[0] == SUMP_ID
+
+    def test_sump_probe_detected_in_cli_mode(self):
+        """SUMP_ID (0x02) probe should be detectable regardless of CLI/SLCAN mode."""
+        cmds = self._simulate_cdc_receive([0x02])
+        self.assertEqual(len(cmds), 1)
+        self.assertTrue(self._is_sump_probe(cmds[0]))
+
+    def test_cli_commands_not_misdetected_as_sump(self):
+        """Normal CLI commands ('help\\r') should not trigger SUMP."""
+        cmds = self._simulate_cdc_receive(b"help\r")
+        self.assertEqual(len(cmds), 1)
+        self.assertFalse(self._is_sump_probe(cmds[0]))
+
+    def test_esc_detected_in_cli_mode(self):
+        """ESC (0x1B) should also be forwarded in CLI mode for SUMP exit."""
+        cmds = self._simulate_cdc_receive([0x1B])
+        self.assertEqual(len(cmds), 1)
+        self.assertEqual(cmds[0], bytes([0x1B]))
+
+    def test_pulseview_scan_works_in_cli_mode(self):
+        """PulseView's scan sequence (5x 0x00 + 0x02) detected from CLI mode."""
+        cmds = self._simulate_cdc_receive([0x00, 0x00, 0x00, 0x00, 0x00, 0x02])
+        self.assertEqual(len(cmds), 1)
+        self.assertTrue(self._is_sump_probe(cmds[0]))
+
+
+class TestSUMPFlagsFullWidth(unittest.TestCase):
+    """Test that SUMP_FLAGS parses all 4 parameter bytes (for RLE bit 8)."""
+
+    def test_flags_rle_bit(self):
+        """SUMP_FLAG_RLE (bit 8) is correctly parsed from byte[1]."""
+        dev = MockSUMPDevice()
+        for b in encode_sump_flags(SUMP_FLAG_RLE):
+            dev.process_byte(b)
+        self.assertEqual(dev.flags, SUMP_FLAG_RLE)
+
+    def test_flags_low_byte(self):
+        """Low byte of flags is still parsed correctly."""
+        dev = MockSUMPDevice()
+        for b in encode_sump_flags(0x42):
+            dev.process_byte(b)
+        self.assertEqual(dev.flags, 0x42)
+
+    def test_flags_combined_bits(self):
+        """Multiple flag bits across bytes work together."""
+        dev = MockSUMPDevice()
+        for b in encode_sump_flags(SUMP_FLAG_RLE | 0x03):
+            dev.process_byte(b)
+        self.assertEqual(dev.flags, SUMP_FLAG_RLE | 0x03)
 
 
 if __name__ == "__main__":
