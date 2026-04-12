@@ -1691,8 +1691,8 @@ RAMN_Result_t RAMN_BITBANG_GsUsbLoop(void)
 #if defined(ENABLE_SUMP_OLS)
 
 // Print the SUMP circular buffer as a compact VCD file.
-// Uses the pre-trigger window (up to SUMP_SAMPLE_BUFFER_SIZE samples ending at the
-// trigger point, or the most recent samples if no trigger was recorded).
+// Uses all available samples (up to SUMP_SAMPLE_BUFFER_SIZE) for the
+// maximum possible window, just like SUMP OLS view would.
 // Only signal changes are emitted, making the output as compact as possible.
 // The output can be saved to a .vcd file and loaded into PulseView.
 RAMN_Result_t RAMN_BITBANG_Vcd(void)
@@ -1700,47 +1700,29 @@ RAMN_Result_t RAMN_BITBANG_Vcd(void)
 	char num[24];
 
 	// Sample period in nanoseconds.
-	// Timer clock = 80 MHz / prescaler → one tick = prescaler * 25/2 ns.
-	// One sample = bit_quanta timer ticks → period = bit_quanta * prescaler * 25/2 ns.
+	// Timer clock = 80 MHz / prescaler -> one tick = prescaler * 25/2 ns.
+	// One sample = bit_quanta timer ticks -> period = bit_quanta * prescaler * 25/2 ns.
 	uint64_t sample_period_ns = (uint64_t)bit_quanta * prescaler * 25ULL / 2ULL;
 
-	// Determine windowing (same logic as SUMP pre-trigger window).
+	// Use all available samples for the maximum window.
 	uint32_t total_written = RAMN_SUMP_SampleCount;
-	uint32_t trig_idx      = RAMN_SUMP_TriggerIndex;
+	uint32_t available = total_written;
+	if (available > SUMP_SAMPLE_BUFFER_SIZE) available = SUMP_SAMPLE_BUFFER_SIZE;
 
-	uint32_t end_linear;
-	uint32_t start_linear;
-
-	// Pre-trigger window: end at the trigger point (or end of buffer if none).
-	if (trig_idx != SUMP_NO_TRIGGER && trig_idx <= total_written)
-	{
-		end_linear = trig_idx;
-	}
-	else
-	{
-		end_linear = total_written;
-	}
-
-	// Extend window back as far as the physical buffer allows.
-	start_linear = (end_linear > SUMP_SAMPLE_BUFFER_SIZE) ? (end_linear - SUMP_SAMPLE_BUFFER_SIZE) : 0U;
-
-	// Do not read samples that have been overwritten by the circular buffer.
-	if (total_written > SUMP_SAMPLE_BUFFER_SIZE)
-	{
-		uint32_t oldest = total_written - SUMP_SAMPLE_BUFFER_SIZE;
-		if (start_linear < oldest) start_linear = oldest;
-	}
+	uint32_t end_linear   = total_written;
+	uint32_t start_linear = total_written - available;
 
 	uint32_t send_count = end_linear - start_linear;
 
-	// --- VCD header ---
-	RAMN_USB_SendStringFromTask("$timescale 1 ns $end\r");
-	RAMN_USB_SendStringFromTask("$scope module RAMN $end\r");
-	RAMN_USB_SendStringFromTask("$var wire 1 ! TX $end\r");
-	RAMN_USB_SendStringFromTask("$var wire 1 \" RX $end\r");
-	RAMN_USB_SendStringFromTask("$var wire 1 # TRIG $end\r");
-	RAMN_USB_SendStringFromTask("$upscope $end\r");
-	RAMN_USB_SendStringFromTask("$enddefinitions $end\r");
+	// --- VCD header (one line for compactness) ---
+	RAMN_USB_SendStringFromTask(
+		"$timescale 1ns $end "
+		"$scope module RAMN $end "
+		"$var wire 1 ! TX $end "
+		"$var wire 1 \" RX $end "
+		"$var wire 1 # TRIG $end "
+		"$upscope $end "
+		"$enddefinitions $end\r");
 
 	// --- Initial values at t=0 ---
 	uint8_t s0 = (send_count > 0U)
@@ -1751,13 +1733,13 @@ RAMN_Result_t RAMN_BITBANG_Vcd(void)
 	uint8_t prev_rx   = (s0 & SUMP_BIT_RX)   ? 1U : 0U;
 	uint8_t prev_trig = (s0 & SUMP_BIT_TRIG) ? 1U : 0U;
 
-	RAMN_USB_SendStringFromTask("#0\r$dumpvars\r");
+	RAMN_USB_SendStringFromTask("#0 $dumpvars ");
 
-	num[0] = prev_tx ? '1' : '0'; num[1] = '!'; num[2] = '\r'; num[3] = '\0';
+	num[0] = prev_tx ? '1' : '0'; num[1] = '!'; num[2] = ' '; num[3] = '\0';
 	RAMN_USB_SendStringFromTask(num);
-	num[0] = prev_rx ? '1' : '0'; num[1] = '"'; num[2] = '\r'; num[3] = '\0';
+	num[0] = prev_rx ? '1' : '0'; num[1] = '"'; num[2] = ' '; num[3] = '\0';
 	RAMN_USB_SendStringFromTask(num);
-	num[0] = prev_trig ? '1' : '0'; num[1] = '#'; num[2] = '\r'; num[3] = '\0';
+	num[0] = prev_trig ? '1' : '0'; num[1] = '#'; num[2] = ' '; num[3] = '\0';
 	RAMN_USB_SendStringFromTask(num);
 
 	RAMN_USB_SendStringFromTask("$end\r");
@@ -1789,24 +1771,26 @@ RAMN_Result_t RAMN_BITBANG_Vcd(void)
 
 			if (tx != prev_tx)
 			{
-				num[0] = tx ? '1' : '0'; num[1] = '!'; num[2] = '\r'; num[3] = '\0';
+				num[0] = tx ? '1' : '0'; num[1] = '!'; num[2] = ' '; num[3] = '\0';
 				RAMN_USB_SendStringFromTask(num);
 				prev_tx = tx;
 			}
 			if (rx != prev_rx)
 			{
-				num[0] = rx ? '1' : '0'; num[1] = '"'; num[2] = '\r'; num[3] = '\0';
+				num[0] = rx ? '1' : '0'; num[1] = '"'; num[2] = ' '; num[3] = '\0';
 				RAMN_USB_SendStringFromTask(num);
 				prev_rx = rx;
 			}
 			if (trig != prev_trig)
 			{
-				num[0] = trig ? '1' : '0'; num[1] = '#'; num[2] = '\r'; num[3] = '\0';
+				num[0] = trig ? '1' : '0'; num[1] = '#'; num[2] = ' '; num[3] = '\0';
 				RAMN_USB_SendStringFromTask(num);
 				prev_trig = trig;
 			}
 		}
 	}
+
+	RAMN_USB_SendStringFromTask("\r");
 
 	return RAMN_OK;
 }
