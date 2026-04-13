@@ -55,5 +55,23 @@ RAMN_Result_t RAMN_BITBANG_DenyOnce(uint8_t n);
 // Same as above, but will loop and repeat (instead of recording the bus)
 RAMN_Result_t RAMN_BITBANG_Deny(uint8_t n);
 
+#if defined(ENABLE_GSUSB)
+// Enter a GS_USB + bitbang bridge mode.
+// CAN frames received via bitbang are delivered to the host through GS_USB.
+// CAN frames sent by the host through GS_USB are transmitted via bitbang.
+// When ENABLE_SUMP_OLS is also defined, PulseView's SUMP probe (0x02) is
+// auto-detected: the loop pauses, enters SUMP mode to serve captured samples,
+// and resumes when SUMP exits (ESC). Press ESC (outside SUMP) to exit entirely.
+RAMN_Result_t RAMN_BITBANG_GsUsbLoop(void);
+#endif
+
+#if defined(ENABLE_SUMP_OLS)
+// Print the SUMP circular buffer as a compact VCD file on the serial console.
+// Uses all available samples (up to SUMP_SAMPLE_BUFFER_SIZE) for the maximum
+// possible window. The output can be saved to a .vcd file and loaded into
+// PulseView. Only signal changes are emitted for maximum compactness.
+RAMN_Result_t RAMN_BITBANG_Vcd(void);
+#endif
+
 #endif
 #endif /* INC_RAMN_BITBANG_H_ */

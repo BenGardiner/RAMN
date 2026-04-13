@@ -786,7 +786,269 @@ Send them to ECU D. You'll notice it does not trigger an error and ECU D happily
 
 .. image:: img/bb_send6.png
    :align: center 
-	  
+
+.. _sump_ols_mode:
+
+SUMP / OLS Logic Analyzer Mode
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+RAMN includes a built-in `SUMP / OLS <https://www.sump.org/projects/analyzer/protocol/>`_ protocol implementation that lets you visualize CAN bus bitstream captures using `PulseView <https://sigrok.org/wiki/PulseView>`_ (from the `sigrok <https://sigrok.org/>`_ project).
+This turns RAMN into a 3-channel logic analyzer for the CAN TX and RX signals, with trigger-point marking.
+
+.. note::
+
+	The SUMP/OLS mode requires both ``ENABLE_SUMP_OLS`` and ``ENABLE_BITBANG`` to be enabled in the firmware configuration. These are enabled by default in the ECU A firmware.
+
+How It Works
+~~~~~~~~~~~~
+
+The SUMP mode does **not** capture live.
+Instead, every ``bb`` (bitbang) command automatically records CAN TX and CAN RX pin samples into a 4096-sample circular buffer.
+When PulseView requests data, RAMN returns whatever was last captured by the most recent bitbang command.
+
+The captured data has three channels:
+
+- **Channel 0 (CAN_TX)**: The state of the CAN TX pin (PB9). High = recessive (1), low = dominant (0).
+- **Channel 1 (CAN_RX)**: The state of the CAN RX pin (PB8). High = recessive (1), low = dominant (0).
+- **Channel 2 (TRIG)**: A trigger marker that goes high for exactly one sample at the point where the bitbang trigger condition was met.
+
+The bitbang trigger (configured via ``bb set trig``) maps directly to the SUMP trigger channel.
+For example, if you set ``bb set trig 1BB`` and run ``bb read``, the TRIG channel in PulseView will pulse high at exactly the sample where message 0x1BB's start-of-frame was detected.
+This allows you to see both pre-trigger and post-trigger activity around the event of interest.
+
+The circular buffer holds up to 4096 samples.
+The sample rate is determined by the bitbang timing (set via ``bb set bit_quanta`` and ``bb set prescaler``).
+At the default 500 kbps settings (prescaler=1, bit_quanta=160), one sample is taken per CAN bit, giving an effective sample rate of 500 kHz.
+This means the buffer holds approximately 8 ms of CAN bus activity.
+
+Entering SUMP Mode
+~~~~~~~~~~~~~~~~~~~
+
+There are two ways to enter SUMP mode:
+
+**Method 1: Manual entry from the CLI**
+
+From the RAMN CLI, type:
+
+.. code-block:: text
+
+	sump
+
+The device will enter SUMP mode and wait for PulseView (or any SUMP-compatible client) to connect.
+
+**Method 2: Automatic entry from PulseView**
+
+When PulseView scans for devices, it sends the SUMP protocol ID query (byte ``0x02``).
+RAMN detects this automatically — even from slcan mode — and enters SUMP mode without any user intervention.
+This means you can simply open PulseView, select RAMN's serial port, and start working immediately.
+
+Typical Workflow
+~~~~~~~~~~~~~~~~
+
+A typical session looks like this:
+
+1. **Configure and run a bitbang capture.** Open a serial terminal, enter CLI mode with ``#``, and run a bitbang command:
+
+   .. code-block:: text
+
+   	bb set trig any
+   	bb dump
+
+   This captures CAN bus activity into the SUMP sample buffer. The bitbang trigger point is recorded.
+
+2. **Connect PulseView.** Open PulseView and add a new device using *Openbench Logic Sniffer & SUMP compatibles*. Select RAMN's serial port and press *Scan for devices*. RAMN will be detected as "RAMN" with 3 channels.
+
+3. **Fetch the capture.** Click *Run* in PulseView. It will retrieve the pre-recorded samples from the buffer. You will see the CAN TX, CAN RX, and TRIG channels.
+
+4. **Analyze the data.** You can use PulseView's protocol decoders, zoom, and cursor features to analyze the captured bitstream. The TRIG channel marks exactly where the bitbang trigger fired, making it easy to locate the event of interest.
+
+5. **Repeat.** Go back to your serial terminal, run another ``bb`` command (e.g., ``bb read``, ``bb dump``, ``bb deny_once 0``), and click *Run* in PulseView again to see the new capture. Each ``bb`` command resets and repopulates the sample buffer.
+
+.. note::
+
+	Because PulseView's auto-detection enters SUMP mode (which blocks the normal CLI), you should run your bitbang command **first** in the serial terminal, and then use PulseView to retrieve the data.
+	Alternatively, you can enter SUMP mode manually with ``sump``, then use PulseView, and then exit SUMP mode to run more bitbang commands.
+
+Pre-Trigger and Post-Trigger Windowing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The SUMP protocol supports configuring how many samples to return before and after the trigger point.
+PulseView sends this configuration via the SUMP ``CNT`` command as the *delay count* (number of post-trigger samples).
+
+When a trigger has been recorded:
+
+- Samples **before** the trigger (pre-trigger window) show what was happening on the bus leading up to the event.
+- Samples **after** the trigger (post-trigger window) show the response to the event.
+
+If no trigger was recorded (e.g., the bitbang command used ``bb set trig now``), RAMN returns the most recent samples from the buffer.
+
+The circular buffer allows RAMN to maximize the captured data: even if many samples are recorded, the most recent 4096 are always available.
+
+Exiting SUMP Mode
+~~~~~~~~~~~~~~~~~~
+
+To exit SUMP mode and return to the normal CLI:
+
+- **Press ESC** (ASCII ``0x1B``) in your serial terminal.
+
+This cleanly returns RAMN to the CLI prompt. No reset is required.
+
+.. note::
+
+	If you entered SUMP mode via PulseView's auto-detection (not via the ``sump`` CLI command), RAMN returns to its previous mode (slcan or CLI) when you send ESC.
+	Closing PulseView alone does **not** exit SUMP mode — you must send ESC from a serial terminal.
+
+.. _bb_gsusb_mode:
+
+GS_USB + Bitbang Bridge Mode
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+When the ``ENABLE_GSUSB`` flag is also enabled, RAMN offers a ``bb gsusb`` command that bridges the GS_USB (candlelight) interface with the bitbang module.
+This allows standard Linux SocketCAN tools (such as ``candump``, ``cansend``, and ``python-can``) to interact with the CAN bus through bitbanging instead of the normal FDCAN peripheral.
+
+.. note::
+
+	This mode requires both ``ENABLE_GSUSB`` and ``ENABLE_BITBANG`` to be enabled in the firmware configuration.
+	``ENABLE_GSUSB`` is **not** enabled by default — uncomment it in ``ramn_config.h`` and rebuild the firmware.
+
+How It Works
+~~~~~~~~~~~~
+
+In ``bb gsusb`` mode, RAMN continuously:
+
+1. **Receives CAN frames via bitbang** — the bitbang module monitors the CAN bus and captures any frame it detects. Each captured frame is parsed (ID, DLC, data) and delivered to the GS_USB host as a standard ``gs_host_frame``.
+2. **Transmits CAN frames via bitbang** — when the host sends a CAN frame through the GS_USB interface (e.g., via ``cansend``), RAMN converts it to a raw CAN bitstream (with proper bit stuffing and CRC) and transmits it using GPIO bitbanging.
+
+This is useful for scenarios where you want to use standard CAN tools but need the low-level control that bitbanging provides, for example to test interactions with a CAN bus at a non-standard baud rate.
+
+Entering and Using the Mode
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+1. Connect to RAMN's serial port and enter CLI mode with ``#``.
+
+2. Start the bridge:
+
+   .. code-block:: text
+
+   	bb gsusb
+
+   RAMN will print ``Entering bb+GS_USB mode. Press ESC to exit.``
+
+3. On your host, bring up the GS_USB interface as you normally would (e.g., ``sudo ip link set can0 up type can bitrate 500000``).
+
+4. Use standard tools:
+
+   .. code-block:: bash
+
+   	# Monitor the bus
+   	candump can0
+
+   	# Send a frame via bitbang
+   	cansend can0 024#DEADBEEF
+
+5. Each frame that appears on the CAN bus is captured by the bitbang module and forwarded to the host through GS_USB.
+
+Exiting the Mode
+~~~~~~~~~~~~~~~~
+
+To exit ``bb gsusb`` mode:
+
+- **Press ESC** (ASCII ``0x1B``) in the serial terminal.
+
+This restores the normal FDCAN peripheral and resumes standard GS_USB operation. No reset is required.
+
+SUMP Auto-Enter from bb gsusb
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+While in ``bb gsusb`` mode, RAMN also detects PulseView's SUMP probe (byte ``0x02``). When detected:
+
+1. The ``bb gsusb`` loop pauses and the bitbang GPIO pins are restored temporarily.
+2. RAMN responds to PulseView's ID query and enters SUMP mode.
+3. PulseView can fetch the pre-recorded samples from the most recent bitbang capture.
+4. When you press ESC in the serial terminal, SUMP mode exits and the ``bb gsusb`` loop resumes automatically.
+
+This allows you to view captured traces in PulseView without leaving ``bb gsusb`` mode — no need to exit, view, and re-enter.
+
+.. note::
+
+	While in ``bb gsusb`` mode, the bitbang timing parameters (``prescaler``, ``bit_quanta``, ``sampling_quanta``) configured via ``bb set`` are used. Make sure they match the CAN bus baud rate before entering the mode.
+
+.. _bb_sump_gsusb_workflow:
+
+Combined Workflow: Bitbang, SUMP, and GS_USB
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+This section describes the full user flow for using the bitbang module, the SUMP logic analyzer, and the GS_USB bridge together, including how GS_USB behaves at each stage.
+
+GS_USB Behavior Summary
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+- **Normal operation** (default): GS_USB uses the FDCAN peripheral. The host sees CAN frames through SocketCAN as usual.
+- **During** ``bb`` **commands** (``bb read``, ``bb dump``, ``bb deny``, etc.): ECU A reconfigures its CAN pins to GPIO for bitbanging. The FDCAN peripheral is temporarily disabled. GS_USB continues to run on the host side, but no frames are forwarded during the bitbang operation because the FDCAN peripheral is inactive.  When the ``bb`` command completes, the FDCAN peripheral is restored and GS_USB resumes normal operation automatically.
+- **During** ``bb gsusb``: GS_USB frames are routed through the bitbang engine instead of FDCAN. The host still uses SocketCAN tools (``candump``, ``cansend``) transparently, but the actual TX/RX happens via GPIO bitbanging. PulseView can auto-enter SUMP mode while ``bb gsusb`` is running (the loop pauses, serves SUMP data, then resumes). When you exit with ESC (while not in SUMP mode), FDCAN is restored and GS_USB returns to normal FDCAN-based operation.
+- **During** ``sump`` **mode**: The device processes SUMP protocol commands (from PulseView) instead of normal CLI or slcan traffic. GS_USB is not affected by SUMP mode itself — SUMP only changes how the USB serial data stream is interpreted. However, since you cannot run ``bb`` commands while in SUMP mode, no new bitbang captures occur.
+
+Full Iterative Workflow
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+A typical debugging session using all three features looks like this:
+
+1. **Enter CLI mode.** Open a serial terminal and type ``#`` to enter the CLI.
+
+2. **Configure the bitbang trigger.** Set the trigger condition and timeout for the activity you want to capture:
+
+   .. code-block:: text
+
+   	bb set trig 024
+   	bb set timeout 5000
+
+3. **Run a bitbang command.** Execute the bitbang operation (e.g., read, dump, denyonce):
+
+   .. code-block:: text
+
+   	bb read
+
+   This captures CAN bus activity into the SUMP sample buffer. The bitbang trigger point is recorded. GS_USB is temporarily unavailable while the bitbang command runs, but resumes when it completes.
+
+4. **View the capture in PulseView.** Open PulseView and connect to RAMN's serial port (using *Openbench Logic Sniffer & SUMP compatibles*). Click *Run* to fetch the pre-recorded samples. PulseView's auto-detection will enter SUMP mode automatically.
+
+   Alternatively, type ``sump`` in the CLI to enter SUMP mode manually before opening PulseView.
+
+5. **Analyze the data.** Use PulseView's protocol decoders and zoom to inspect the CAN TX, CAN RX, and TRIG channels.
+
+6. **Exit SUMP mode.** Press ESC in your serial terminal. This returns to the CLI (or slcan mode, depending on how SUMP was entered). GS_USB was not affected during SUMP mode, and normal CLI operation resumes.
+
+7. **Adjust and repeat.** Reconfigure the trigger if needed (``bb set trig ...``), run another ``bb`` command, and fetch the new capture in PulseView. Each ``bb`` command resets the sample buffer.
+
+8. **Exit.** When done, you can simply close the serial terminal. No special exit command is needed — the device returns to its default mode.
+
+Using GS_USB Bridge in the Workflow
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If you want to use SocketCAN tools (``candump``, ``cansend``) to generate or monitor traffic while capturing with bitbang, use the ``bb gsusb`` mode:
+
+1. **Enter** ``bb gsusb`` **mode.** From the CLI:
+
+   .. code-block:: text
+
+   	bb gsusb
+
+   GS_USB frames are now routed through the bitbang engine. All CAN bus activity (TX and RX) is recorded into the SUMP sample buffer automatically.
+
+2. **Use SocketCAN tools.** On the host, use ``candump can0`` to monitor or ``cansend can0 024#DEADBEEF`` to transmit. Frames are sent/received via bitbanging.
+
+3. **View the capture without exiting.** While still in ``bb gsusb`` mode, simply open PulseView and scan for the RAMN device. PulseView sends the SUMP probe byte (``0x02``), which RAMN detects automatically. The ``bb gsusb`` loop pauses, RAMN enters SUMP mode, and PulseView can fetch the pre-recorded samples. When you send ESC (or PulseView disconnects and you send ESC), SUMP mode exits and the ``bb gsusb`` loop resumes — no need to leave ``bb gsusb`` mode.
+
+   Alternatively, you can exit ``bb gsusb`` first (press ESC), then use ``sump`` or PulseView auto-detection from the CLI.
+
+4. **Exit** ``bb gsusb`` **mode.** Press ESC in the serial terminal (when not in SUMP mode). GS_USB returns to normal FDCAN-based operation.
+
+5. **Repeat.** Generate more traffic with SocketCAN tools, view in PulseView (inline or after exiting), and iterate.
+
+.. note::
+
+	Each ``bb`` command (including ``bb gsusb``) resets the SUMP sample buffer at the start of each operation (each TX or RX frame within ``bb gsusb``). To capture the full session, be aware that only the most recent 4096 samples are preserved.
+
 Protocol Level Attacks
 ----------------------
 

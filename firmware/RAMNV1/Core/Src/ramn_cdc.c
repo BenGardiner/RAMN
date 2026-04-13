@@ -90,6 +90,19 @@ RAMN_Bool_t RAMN_CDC_ProcessCLIBuffer(uint8_t* USBRxBuffer, uint32_t commandLeng
 	// Command is in USBRxBuffer, length is in commandLength. There is no endline in buffer.
 	RAMN_Bool_t mustSwitch = False; //return value, set to True if device should switch to slcan mode
 
+#if defined(ENABLE_SUMP_OLS) && defined(ENABLE_BITBANG)
+	// SUMP auto-detect: PulseView sends SUMP_ID (0x02) as a probe.
+	// The CDC ISR forwards this as a single-byte command. Detect it and enter SUMP mode
+	// so PulseView's "scan for devices" works even when in CLI mode.
+	if (RAMN_SUMP_IsSUMPProbe(USBRxBuffer, commandLength) == True)
+	{
+		RAMN_USB_FlushTxPipeline();
+		RAMN_USB_SendFromTask((const uint8_t*)"1ALS", 4U);
+		RAMN_SUMP_Enter();
+		return False;
+	}
+#endif
+
 	// Zero terminate the USB command buffer
 	USBRxBuffer[commandLength] = '\0';
 
@@ -253,6 +266,12 @@ RAMN_Bool_t RAMN_CDC_ProcessCLIBuffer(uint8_t* USBRxBuffer, uint32_t commandLeng
 #ifdef ENABLE_CHIP8
 						RAMN_USB_SendStringFromTask("    - play: Play a game on ECU A's LCD screen. Usage: play <game number>.\r");
 						RAMN_USB_SendStringFromTask("    - stop: Stop any ongoing game. Usage: stop.\r");
+#endif
+#ifdef ENABLE_BITBANG
+						RAMN_USB_SendStringFromTask("    - bb/bitbang: Bitbang CAN bus commands. Type 'bb help' for details.\r");
+#endif
+#if defined(ENABLE_SUMP_OLS) && defined(ENABLE_BITBANG)
+						RAMN_USB_SendStringFromTask("    - sump: Enter SUMP/OLS mode for PulseView (also auto-activates when PulseView connects). ESC to exit.\r");
 #endif
 						RAMN_USB_SendStringFromTask("\r");
 						RAMN_USB_SendStringFromTask("Commands are case sensitive.\r");
@@ -732,6 +751,12 @@ RAMN_Bool_t RAMN_CDC_ProcessCLIBuffer(uint8_t* USBRxBuffer, uint32_t commandLeng
 										" bb loopof         - Send a loop of overload frames after trigger message (until timeout)\r"
 										" bb set <p> <v>    - Set parameter. See 'bb show' for list.\r"
 										" bb show           - Show configuration\r"
+#if defined(ENABLE_SUMP_OLS)
+										" bb vcd            - Print last capture as a compact VCD file (paste into PulseView)\r"
+#endif
+#if defined(ENABLE_GSUSB)
+										" bb gsusb          - Bridge GS_USB and bitbang: RX frames via bb are delivered to host, host TX frames are sent via bb. ESC to exit.\r"
+#endif
 										"\rHOW TO USE (see documentation for details)\r\rFirst set a trigger (specific CAN ID /'any'/'idle'/'now') and timeout value with the set command.\rExamples:'bb set trig 024', 'bb set trig any', 'bb set timeout 5000'.\r"
 										"Commands will return when they succeed or when they timeout (trigger timeout or end of loop)."
 										"\r\rCommands 'deny' and 'deny_once' target the bit provided in argument: n=0 -> EOF1 (rx/tx error), n=1 -> EOF0 (tx error), n=2 -> IFS2 (OF), n=3 -> IFS1 (OF), n=4-> IFS0 (OK).\r"
@@ -875,11 +900,28 @@ RAMN_Bool_t RAMN_CDC_ProcessCLIBuffer(uint8_t* USBRxBuffer, uint32_t commandLeng
 								RAMN_BITBANG_Show();
 							}
 
+#if defined(ENABLE_SUMP_OLS)
+							else if (strcmp(token, "vcd") == 0) {
+								RAMN_BITBANG_Vcd();
+							}
+#endif
+
+#if defined(ENABLE_GSUSB)
+							else if (strcmp(token, "gsusb") == 0) {
+								RAMN_BITBANG_GsUsbLoop();
+							}
+#endif
+
 							else {
 								RAMN_USB_SendStringFromTask("Invalid bitbang command. Type 'bitbang help' for help.\r");
 							}
 						}
 					}
+				}
+#endif
+#if defined(ENABLE_SUMP_OLS) && defined(ENABLE_BITBANG)
+				else if (strcmp(token, "sump") == 0) {
+					RAMN_SUMP_Enter();
 				}
 #endif
 #ifdef ENABLE_SCREEN
@@ -1029,6 +1071,20 @@ RAMN_Bool_t RAMN_CDC_ProcessSLCANBuffer(uint8_t* USBRxBuffer, uint32_t commandLe
 	uint8_t smallResponseBuffer[50U]; // Buffer for small responses
 
 	RAMN_Bool_t mustSwitch = False; //return value, set to True if device should switch to CLI mode
+
+#if defined(ENABLE_SUMP_OLS) && defined(ENABLE_BITBANG)
+	// SUMP auto-detect: when PulseView connects, it sends SUMP_ID (0x02) as a probe.
+	// The CDC ISR forwards this as a single-byte command. Detect it and enter SUMP mode.
+	if (RAMN_SUMP_IsSUMPProbe(USBRxBuffer, commandLength) == True)
+	{
+		// Respond to the ID query that triggered auto-detect
+		RAMN_USB_FlushTxPipeline();
+		RAMN_USB_SendFromTask((const uint8_t*)"1ALS", 4U);
+		// Enter SUMP mode (blocks until ESC received)
+		RAMN_SUMP_Enter();
+		return False;
+	}
+#endif
 
 	if ((USBRxBuffer[0U] == '0') || (USBRxBuffer[0U] == '1'))
 	{
