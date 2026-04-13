@@ -47,14 +47,20 @@ static void SUMP_SendBytes(const uint8_t* data, uint32_t len);
 
 // ---- USB Send Helpers ----
 
+// Set True when a USB send fails; checked by the send loop to abort early
+// instead of blocking for seconds on each subsequent failed send.
+static volatile RAMN_Bool_t sump_send_error = False;
+
 static void SUMP_SendByte(uint8_t byte)
 {
-    RAMN_USB_SendFromTask(&byte, 1U);
+    if (sump_send_error == True) return;
+    if (RAMN_USB_SendFromTask(&byte, 1U) != RAMN_OK) sump_send_error = True;
 }
 
 static void SUMP_SendBytes(const uint8_t* data, uint32_t len)
 {
-    RAMN_USB_SendFromTask(data, len);
+    if (sump_send_error == True) return;
+    if (RAMN_USB_SendFromTask(data, len) != RAMN_OK) sump_send_error = True;
 }
 
 // ---- SUMP ID Response ----
@@ -388,14 +394,17 @@ static RAMN_Bool_t SUMP_ProcessCommand(uint8_t cmd, const uint8_t* params)
         // this sends idle (all-recessive) data, which is correct:
         // the user must first run a bitbang capture command to populate
         // the SUMP buffer.
+        sump_send_error = False;
         SUMP_SendCapturedSamples();
         break;
 
     case SUMP_ID:
+        sump_send_error = False;
         SUMP_SendID();
         break;
 
     case SUMP_DESC:
+        sump_send_error = False;
         SUMP_SendMetadata();
         break;
 

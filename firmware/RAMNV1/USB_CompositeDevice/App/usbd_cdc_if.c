@@ -371,6 +371,34 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 					else RAMN_USB_Config.USBErrCnt++;
 				}
 				currentIndex = 0;
+
+				// If the byte was SUMP_ID (0x02), PulseView is connecting.
+				// Activate raw forwarding NOW so that any remaining bytes in this
+				// USB packet (long SUMP commands >= 0x80 like FLAGS, CNT, etc.)
+				// are forwarded intact instead of getting stuck in the line buffer.
+				if (Buf[i] == 0x02)
+				{
+					RAMN_SUMP_Active = True;
+
+					// Forward remaining bytes in this packet as a single raw chunk
+					uint32_t remain_start = i + 1;
+					if (remain_start < *Len && USBD_recvBuffer != NULL)
+					{
+						uint16_t remainLen = (uint16_t)(*Len - remain_start);
+						if (xStreamBufferSendFromISR(*USBD_recvBuffer, &remainLen, 2U, NULL) == 2U)
+						{
+							if (xStreamBufferSendFromISR(*USBD_recvBuffer, &Buf[remain_start], remainLen, NULL) == remainLen)
+							{
+								vTaskNotifyGiveFromISR(*USBD_recvTask, &xHigherPriorityTaskWoken);
+								portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+							}
+							else RAMN_USB_Config.USBErrCnt++;
+						}
+						else RAMN_USB_Config.USBErrCnt++;
+					}
+					USBD_Composite_ReceivePacket(&hUsbDeviceFS, CDC_OUT_EP);
+					return (USBD_OK);
+				}
 			}
 #endif
 			else if(Buf[i] != '\r') // Regular character, we add it to the buffer
