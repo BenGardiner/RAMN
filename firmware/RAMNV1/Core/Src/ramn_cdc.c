@@ -96,6 +96,7 @@ RAMN_Bool_t RAMN_CDC_ProcessCLIBuffer(uint8_t* USBRxBuffer, uint32_t commandLeng
 	// so PulseView's "scan for devices" works even when in CLI mode.
 	if (RAMN_SUMP_IsSUMPProbe(USBRxBuffer, commandLength) == True)
 	{
+		RAMN_USB_FlushTxPipeline();
 		RAMN_USB_SendFromTask((const uint8_t*)"1ALS", 4U);
 		RAMN_SUMP_Enter();
 		return False;
@@ -1077,6 +1078,7 @@ RAMN_Bool_t RAMN_CDC_ProcessSLCANBuffer(uint8_t* USBRxBuffer, uint32_t commandLe
 	if (RAMN_SUMP_IsSUMPProbe(USBRxBuffer, commandLength) == True)
 	{
 		// Respond to the ID query that triggered auto-detect
+		RAMN_USB_FlushTxPipeline();
 		RAMN_USB_SendFromTask((const uint8_t*)"1ALS", 4U);
 		// Enter SUMP mode (blocks until ESC received)
 		RAMN_SUMP_Enter();

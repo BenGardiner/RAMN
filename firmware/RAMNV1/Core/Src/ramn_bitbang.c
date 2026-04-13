@@ -1652,6 +1652,7 @@ RAMN_Result_t RAMN_BITBANG_GsUsbLoop(void)
 				BB_Stop();
 
 				// Respond to the ID query that triggered auto-detect
+				RAMN_USB_FlushTxPipeline();
 				RAMN_USB_SendFromTask((const uint8_t*)"1ALS", 4U);
 
 				// Enter SUMP mode (blocks until ESC received from PulseView/terminal)

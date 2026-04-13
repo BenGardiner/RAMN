@@ -374,6 +374,9 @@ static RAMN_Bool_t SUMP_ProcessCommand(uint8_t cmd, const uint8_t* params)
     switch (cmd)
     {
     case SUMP_RESET:
+        // Flush any stale TX data (e.g. from a previous SUMP_RUN whose
+        // samples were not fully consumed by the host before reconnecting).
+        RAMN_USB_FlushTxPipeline();
         // Reset internal state (but preserve the captured sample buffer)
         sump_cfg.state = SUMP_STATE_IDLE;
         sump_cfg.divider = 0;
@@ -400,6 +403,8 @@ static RAMN_Bool_t SUMP_ProcessCommand(uint8_t cmd, const uint8_t* params)
 
     case SUMP_ID:
         sump_send_error = False;
+        // Flush stale TX data so "1ALS" is the first thing the host reads
+        RAMN_USB_FlushTxPipeline();
         SUMP_SendID();
         break;
 
