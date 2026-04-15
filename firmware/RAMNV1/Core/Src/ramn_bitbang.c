@@ -1500,6 +1500,7 @@ RAMN_Result_t RAMN_BITBANG_GsUsbLoop(void)
 	vTaskSuspend(RAMN_RxTask2Handle);
 
 	BB_Start();
+	BB_SUMP_RESET();
 
 	for (;;)
 	{
@@ -1520,7 +1521,6 @@ RAMN_Result_t RAMN_BITBANG_GsUsbLoop(void)
 			if (tx_len > 0)
 			{
 				// Send via bitbang (wait for idle, then transmit)
-				BB_SUMP_RESET();
 				__disable_irq();
 				CANBIT_TIM->CNT = 0;
 				TIMEOUT_TIM->CNT = 0;
@@ -1575,7 +1575,6 @@ RAMN_Result_t RAMN_BITBANG_GsUsbLoop(void)
 		trig = ARBID_TRIGGER_ANY;
 		timeout = 60; // ~50 ms at 1.22 kHz
 
-		BB_SUMP_RESET();
 		__disable_irq();
 		TIMEOUT_TIM->CNT = 0;
 
@@ -1660,6 +1659,7 @@ RAMN_Result_t RAMN_BITBANG_GsUsbLoop(void)
 
 				// Resume bitbang for the next iteration of the gsusb loop
 				BB_Start();
+				BB_SUMP_RESET();
 			}
 		}
 #else
@@ -1698,10 +1698,12 @@ RAMN_Result_t RAMN_BITBANG_Vcd(void)
 {
 	char num[24];
 
-	// Sample period in nanoseconds.
-	// Timer clock = 80 MHz / prescaler -> one tick = prescaler * 25/2 ns.
-	// One sample = bit_quanta timer ticks -> period = bit_quanta * prescaler * 25/2 ns.
-	uint64_t sample_period_ns = (uint64_t)bit_quanta * prescaler * 25ULL / 2ULL;
+	// Sample period in nanoseconds, derived from the rate recorded at capture time.
+	// Using the stored rate (rather than the current prescaler/bit_quanta settings)
+	// ensures the VCD timestamps match the bitrate of the actual capture, even if
+	// the user has since changed bb settings.
+	uint32_t rate = RAMN_SUMP_SampleRate;
+	uint64_t sample_period_ns = (rate > 0U) ? (1000000000ULL / (uint64_t)rate) : 2000ULL;
 
 	// Determine available compressed bytes.
 	uint32_t total_compressed = RAMN_SUMP_CompressedBytes;
@@ -1810,6 +1812,19 @@ RAMN_Result_t RAMN_BITBANG_Vcd(void)
 			prev_trig = trig;
 			logical_idx++;
 		}
+	}
+
+	// Emit a final timestamp so PulseView shows the full capture duration,
+	// including any trailing idle period compressed by RLE.
+	if (logical_idx > 0U)
+	{
+		uint8_t p = 0U;
+		num[p++] = '#';
+		uint64_t ts = (uint64_t)logical_idx * sample_period_ns;
+		p += uintToBCD(ts, &num[p]);
+		num[p++] = '\r';
+		num[p]   = '\0';
+		RAMN_USB_SendStringFromTask(num);
 	}
 
 	RAMN_USB_SendStringFromTask("\r");
