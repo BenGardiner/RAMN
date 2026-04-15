@@ -66,10 +66,10 @@ RAMN_Result_t RAMN_BITBANG_GsUsbLoop(void);
 #endif
 
 #if defined(ENABLE_SUMP_OLS)
-// Print the SUMP circular buffer as a compact VCD file on the serial console.
-// Uses all available samples (up to SUMP_SAMPLE_BUFFER_SIZE) for the maximum
-// possible window. The output can be saved to a .vcd file and loaded into
-// PulseView. Only signal changes are emitted for maximum compactness.
+// Print the SUMP compressed circular buffer as a compact VCD file on the
+// serial console.  Decompresses RLE entries on the fly, emitting only
+// signal changes.  The output can be saved to a .vcd file and loaded into
+// PulseView.
 RAMN_Result_t RAMN_BITBANG_Vcd(void);
 #endif
 

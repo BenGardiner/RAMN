@@ -70,22 +70,25 @@
 
 // ------- SUMP Capture Settings -------
 
-// Number of samples in the circular buffer.
-// Each sample is 1 byte (3 bits used: CAN_TX, CAN_RX, TRIG).
+// Number of bytes in the compressed circular buffer.
+// Entries are either sample bytes (bit 7 = 0, bits 2:0 = TX|RX|TRIG)
+// or RLE count bytes (bit 7 = 1, bits 6:0 = additional repeats 1-127).
 // Must be a power of 2 for efficient circular buffer masking.
 #define SUMP_SAMPLE_BUFFER_SIZE  4096
 
 // Mask for circular buffer index wrap-around (buffer_size - 1).
 #define SUMP_SAMPLE_BUFFER_MASK  (SUMP_SAMPLE_BUFFER_SIZE - 1)
 
-// Reported sample memory size. With RLE compression, we can represent
-// far more samples than the physical buffer holds, so we advertise
-// a larger window to PulseView (1M samples).
-#define SUMP_REPORTED_SAMPLE_MEM  1048576
+// Default sample memory advertised to PulseView when no capture has
+// been done yet.  With RLE the actual capacity depends on data content;
+// this value is used as default read_count / delay_count.
+#define SUMP_DEFAULT_SAMPLE_MEM  1048576
 
-// Sample rate reported to PulseView. This is a nominal value;
-// actual sample rate depends on the bitbang bit_quanta setting.
-#define SUMP_MAX_SAMPLE_RATE     1000000
+// Maximum additional repeats a single RLE count byte can encode (7 bits).
+#define SUMP_STORAGE_RLE_MAX  127
+
+// Bit mask to distinguish storage RLE count bytes from sample bytes.
+#define SUMP_STORAGE_RLE_FLAG  0x80
 
 // Number of probes (channels):
 //   Channel 0: CAN_TX (PB9)
@@ -137,55 +140,144 @@ typedef struct {
     SUMP_State_t state;         // Current state machine state
 } SUMP_Config_t;
 
-// ------- Shared Sample Buffer (written by bitbang, read by SUMP) -------
+// ------- Shared Compressed Sample Buffer (written by bitbang, read by SUMP) -------
+//
+// The circular buffer stores RLE-compressed samples.  Each byte is either:
+//   - Sample byte  (bit 7 = 0): bits 2:0 = TX | RX | TRIG
+//   - RLE count    (bit 7 = 1): bits 6:0 = additional repeats (1-127)
+//
+// Layout invariant:  an RLE count byte is always immediately preceded by a
+// sample byte for the same value, forming a "pair".  When the RLE count
+// reaches 127, the next identical sample starts a new sample byte rather
+// than chaining another RLE byte.  This means at most one consecutive
+// RLE byte, which greatly simplifies wrap-around handling.
 
-// Circular sample buffer populated by bitbang operations.
-// Each byte: bit 0 = CAN_TX (PB9), bit 1 = CAN_RX (PB8), bit 2 = TRIG.
+// Circular compressed buffer.
 extern uint8_t  RAMN_SUMP_Samples[SUMP_SAMPLE_BUFFER_SIZE];
 
-// Total number of samples written (may exceed buffer size; used for wrap detection).
+// Total logical samples recorded (monotonically increasing; may exceed buffer capacity).
 extern volatile uint32_t RAMN_SUMP_SampleCount;
+
+// Total compressed bytes written (monotonically increasing; used for wrap detection).
+extern volatile uint32_t RAMN_SUMP_CompressedBytes;
 
 // Circular buffer write index (always < SUMP_SAMPLE_BUFFER_SIZE).
 extern volatile uint32_t RAMN_SUMP_WriteIndex;
 
-// Sample index (within SampleCount space) where the bitbang trigger fired.
-// Set to SUMP_NO_TRIGGER before a capture; set by BB_SUMP_MARK_TRIGGER.
+// Logical sample index where the bitbang trigger fired.
+// Set to SUMP_NO_TRIGGER before a capture; set by RAMN_SUMP_MarkTrigger.
 extern volatile uint32_t RAMN_SUMP_TriggerIndex;
 
-// Record a TX+RX sample into the SUMP circular buffer.
+// Last sample value written (for RLE comparison).  0xFF = no previous sample.
+extern volatile uint8_t  RAMN_SUMP_PrevSample;
+
+// Actual sample rate in Hz at which the most recent capture was taken.
+// Set by bitbang code before resetting the capture.
+extern volatile uint32_t RAMN_SUMP_SampleRate;
+
+// Record a TX+RX sample into the SUMP compressed circular buffer.
 // Called from bitbang ISR-disabled code.
 // tx_high: 1 if TX pin is recessive, 0 if dominant
 // rx_high: 1 if RX pin is recessive, 0 if dominant
 static inline void RAMN_SUMP_RecordSample(uint8_t tx_high, uint8_t rx_high)
 {
-    uint32_t wi = RAMN_SUMP_WriteIndex;
     uint8_t sample = 0;
     if (tx_high) sample |= SUMP_BIT_TX;
     if (rx_high) sample |= SUMP_BIT_RX;
-    RAMN_SUMP_Samples[wi] = sample;
-    RAMN_SUMP_WriteIndex = (wi + 1) & SUMP_SAMPLE_BUFFER_MASK;
+
     RAMN_SUMP_SampleCount++;
+
+    // Try to extend an existing RLE run for the same sample value.
+    if (RAMN_SUMP_CompressedBytes > 0U && sample == RAMN_SUMP_PrevSample)
+    {
+        uint32_t prev_idx = (RAMN_SUMP_WriteIndex - 1U) & SUMP_SAMPLE_BUFFER_MASK;
+        uint8_t  prev_byte = RAMN_SUMP_Samples[prev_idx];
+
+        if (prev_byte & SUMP_STORAGE_RLE_FLAG)
+        {
+            // Previous byte is an RLE count — try to increment it.
+            if ((prev_byte & 0x7FU) < SUMP_STORAGE_RLE_MAX)
+            {
+                RAMN_SUMP_Samples[prev_idx] = prev_byte + 1U;
+                return;
+            }
+            // RLE count is full (127).  Fall through to emit a new sample byte,
+            // maintaining the pair-constraint (no chained RLE bytes).
+        }
+        else
+        {
+            // Previous byte is a sample byte — start a new RLE count of 1.
+            uint32_t wi = RAMN_SUMP_WriteIndex;
+            RAMN_SUMP_Samples[wi] = SUMP_STORAGE_RLE_FLAG | 1U;
+            RAMN_SUMP_WriteIndex = (wi + 1U) & SUMP_SAMPLE_BUFFER_MASK;
+            RAMN_SUMP_CompressedBytes++;
+            return;
+        }
+    }
+
+    // Write a new sample byte (first sample, different value, or RLE was full).
+    {
+        uint32_t wi = RAMN_SUMP_WriteIndex;
+        RAMN_SUMP_Samples[wi] = sample;
+        RAMN_SUMP_WriteIndex = (wi + 1U) & SUMP_SAMPLE_BUFFER_MASK;
+        RAMN_SUMP_PrevSample = sample;
+        RAMN_SUMP_CompressedBytes++;
+    }
 }
 
 // Mark the current position as the trigger point.
 // The trigger sample gets the TRIG bit set (bit 2 = high for one sample).
 static inline void RAMN_SUMP_MarkTrigger(void)
 {
-    // Record trigger index in the linear sample count space
+    // Nothing to mark if no samples recorded yet.
+    if (RAMN_SUMP_CompressedBytes == 0U) return;
+
     RAMN_SUMP_TriggerIndex = RAMN_SUMP_SampleCount;
 
-    // Set the TRIG bit on the most recently written sample
-    uint32_t prev = (RAMN_SUMP_WriteIndex - 1) & SUMP_SAMPLE_BUFFER_MASK;
-    RAMN_SUMP_Samples[prev] |= SUMP_BIT_TRIG;
+    uint32_t prev_idx = (RAMN_SUMP_WriteIndex - 1U) & SUMP_SAMPLE_BUFFER_MASK;
+    uint8_t  prev_byte = RAMN_SUMP_Samples[prev_idx];
+
+    if (prev_byte & SUMP_STORAGE_RLE_FLAG)
+    {
+        // Previous entry is an RLE count.  We need to "split" the last
+        // repeat out and write it as a separate sample byte with TRIG.
+        uint8_t count = prev_byte & 0x7FU;
+        if (count > 1U)
+        {
+            // Decrement the RLE count (keep the rest of the run).
+            RAMN_SUMP_Samples[prev_idx] = SUMP_STORAGE_RLE_FLAG | (count - 1U);
+        }
+        else
+        {
+            // Count was 1 — remove the RLE byte entirely.
+            RAMN_SUMP_WriteIndex = prev_idx;
+            RAMN_SUMP_CompressedBytes--;
+        }
+
+        // Write a new sample byte with the TRIG bit set.
+        uint8_t trig_sample = RAMN_SUMP_PrevSample | SUMP_BIT_TRIG;
+        uint32_t wi = RAMN_SUMP_WriteIndex;
+        RAMN_SUMP_Samples[wi] = trig_sample;
+        RAMN_SUMP_WriteIndex = (wi + 1U) & SUMP_SAMPLE_BUFFER_MASK;
+        RAMN_SUMP_PrevSample = trig_sample;
+        RAMN_SUMP_CompressedBytes++;
+    }
+    else
+    {
+        // Previous entry is a sample byte — just OR in the TRIG bit.
+        RAMN_SUMP_Samples[prev_idx] |= SUMP_BIT_TRIG;
+        RAMN_SUMP_PrevSample |= SUMP_BIT_TRIG;
+    }
 }
 
 // Reset the sample buffer before a new bitbang operation.
 static inline void RAMN_SUMP_ResetCapture(void)
 {
-    RAMN_SUMP_SampleCount = 0;
-    RAMN_SUMP_WriteIndex = 0;
-    RAMN_SUMP_TriggerIndex = SUMP_NO_TRIGGER;
+    RAMN_SUMP_SampleCount    = 0;
+    RAMN_SUMP_CompressedBytes = 0;
+    RAMN_SUMP_WriteIndex     = 0;
+    RAMN_SUMP_TriggerIndex   = SUMP_NO_TRIGGER;
+    RAMN_SUMP_PrevSample     = 0xFFU;
 }
 
 // ------- SUMP Mode Flag -------
