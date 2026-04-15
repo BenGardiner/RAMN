@@ -83,6 +83,13 @@ RAMN_Result_t 	RAMN_USB_SendASCIIUint16(uint16_t val);
 // Sends an unsigned integer (in ASCII) over serial USB
 RAMN_Result_t 	RAMN_USB_SendASCIIUint32(uint32_t val);
 
+// Flushes the USB TX pipeline: suspends the TX task, resets the TX stream
+// buffer (discarding all pending outbound data), then resumes the TX task.
+// Call this before sending a critical response (e.g. SUMP "1ALS") to
+// prevent stale data from a previous session from contaminating the reply.
+// Must be called from task context (not ISR).
+void 			RAMN_USB_FlushTxPipeline(void);
+
 // Callback for when USB errors are detected
 void 			RAMM_USB_ErrorCallback(USBD_HandleTypeDef* hUsbDeviceFS);
 

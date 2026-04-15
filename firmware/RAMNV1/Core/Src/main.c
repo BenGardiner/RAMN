@@ -1800,7 +1800,9 @@ void RAMN_ReceiveCANFunc(void *argument)
 #endif
 
 #ifdef ENABLE_GSUSB
-			if(RAMN_USB_Config.gsusbOpened && GSUSB_IsConnected((USBD_HandleTypeDef*)hpcd_USB_FS.pData))
+			// Only forward FDCAN RX to GS_USB when NOT in bb mode.
+			// In bb mode, frames are captured via bitbang instead.
+			if(!RAMN_GSUSB_BBMode && RAMN_USB_Config.gsusbOpened && GSUSB_IsConnected((USBD_HandleTypeDef*)hpcd_USB_FS.pData))
 			{
 				if(RAMN_GSUSB_ProcessRX(&CANRxHeader, CANRxData) == RAMN_ERROR)
 				{
@@ -2282,7 +2284,7 @@ void RAMN_DiagTXFunc(void *argument)
 					{
 						while (RAMN_KWP_Continue_TX(xTaskGetTickCount()) != True)
 						{
-							if (xStreamBufferBytesAvailable(KwpTxDataStreamBufferHandle) >= sizeof(RAMN_UDS_ISOTPHandler.txSize))
+							if (xStreamBufferBytesAvailable(KwpTxDataStreamBufferHandle) >= sizeof(RAMN_KWP_ISOTPHandler.txSize))
 							{
 								// We received another TX request even though the ongoing transfer isn't over.
 								// User may be manually sending ISO-TP requests and forgot the FLOW CONTROL frames.

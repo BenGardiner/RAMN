@@ -19,6 +19,7 @@
 #ifdef ENABLE_USB
 
 #include "usbd_cdc.h"
+#include "usbd_composite.h"
 #include "ramn_utils.h"
 
 // Pointer to buffer that holds outgoing USB data
@@ -165,6 +166,30 @@ RAMN_Result_t RAMN_USB_SendASCIIUint32(uint32_t val)
 	return RAMN_USB_SendFromTask(tmp, 8U);
 }
 
+void RAMN_USB_FlushTxPipeline(void)
+{
+	// Suspend the TX task so it cannot read from the stream buffer or
+	// start a new CDC transfer while we are resetting.
+	if (sendTask != NULL && *sendTask != NULL)
+	{
+		vTaskSuspend(*sendTask);
+	}
+
+	// Reset the TX stream buffer, discarding all pending outbound data.
+	// vTaskSuspend removes the TX task from the stream buffer wait list,
+	// so xStreamBufferReset will succeed.
+	if (usbTxBuffer != NULL && *usbTxBuffer != NULL)
+	{
+		xStreamBufferReset(*usbTxBuffer);
+	}
+
+	// Resume the TX task. It will block on the now-empty stream buffer.
+	if (sendTask != NULL && *sendTask != NULL)
+	{
+		vTaskResume(*sendTask);
+	}
+}
+
 void RAMM_USB_ErrorCallback(USBD_HandleTypeDef* hUsbDeviceFS)
 {
 	RAMN_USB_Config.USBErrCnt += 1;
@@ -184,6 +209,24 @@ void RAMN_USB_SerialCloseCallback(USBD_HandleTypeDef* hUsbDeviceFS, uint8_t inde
 		BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 		RAMN_USB_Config.serialOpened = False;
 		RAMN_USB_Config.slcanOpened = False;
+
+		// NAK the CDC IN endpoint to prevent any data sitting in the USB
+		// PMA buffer from being delivered to the next host application that
+		// opens the serial port (prevents stale data de-sync).
+		if (hUsbDeviceFS != NULL && hUsbDeviceFS->pData != NULL)
+		{
+			PCD_HandleTypeDef *hpcd = (PCD_HandleTypeDef *)hUsbDeviceFS->pData;
+			PCD_SET_EP_TX_STATUS(hpcd->Instance, CDC_IN_EP & 0x7FU, USB_EP_TX_NAK);
+		}
+
+		// Clear the CDC TxState so the next CDC_Transmit_FS call does not
+		// think a transfer is still in progress.
+		if (hUsbDeviceFS != NULL && hUsbDeviceFS->pClassData != NULL)
+		{
+			USBD_Composite_HandleTypeDef *hcmp = (USBD_Composite_HandleTypeDef *)hUsbDeviceFS->pClassData;
+			hcmp->TxState[0] = 0U;
+		}
+
 		if (sendTask != NULL)
 		{
 			// Empty the buffer and let the sending task leave the notify waiting phase

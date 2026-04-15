@@ -18,6 +18,17 @@
 
 #ifdef ENABLE_BITBANG
 
+#if defined(ENABLE_SUMP_OLS)
+#include "ramn_sump.h"
+#endif
+
+#if defined(ENABLE_GSUSB)
+#include "usbd_gs_usb.h"
+#include "ramn_gsusb.h"
+#include "cmsis_os.h"
+#include "stream_buffer.h"
+#endif
+
 #include "ramn_canfd.h"
 #include "ramn_usb.h"
 
@@ -28,6 +39,19 @@
 const uint32_t PIN_RX = (1U << 8);
 const uint32_t TX_REC = (1U << 9);
 const uint32_t TX_DOM = (1U << (9 + 16));
+
+// Macro to record a SUMP sample from the current GPIO state.
+// tx_is_high: whether the TX pin (PB9) is recessive (1) or dominant (0)
+// rx_is_high: whether the RX pin (PB8) is recessive (1) or dominant (0)
+#if defined(ENABLE_SUMP_OLS)
+#define BB_SUMP_RECORD(tx_is_high, rx_is_high) RAMN_SUMP_RecordSample(tx_is_high, rx_is_high)
+#define BB_SUMP_RESET() do { RAMN_SUMP_SampleRate = 80000000UL / ((uint32_t)prescaler * (uint32_t)bit_quanta); RAMN_SUMP_ResetCapture(); } while(0)
+#define BB_SUMP_MARK_TRIGGER() RAMN_SUMP_MarkTrigger()
+#else
+#define BB_SUMP_RECORD(tx_is_high, rx_is_high) ((void)0)
+#define BB_SUMP_RESET() ((void)0)
+#define BB_SUMP_MARK_TRIGGER() ((void)0)
+#endif
 
 // Special Arbitration IDs used to trigger an action (trigger on any ID, trigger immediately, trigger on bus idle)
 #define ARBID_TRIGGER_ANY  0xFFFFFFFF
@@ -199,9 +223,12 @@ __attribute__((optimize("Ofast"))) static inline RAMN_Result_t 	BB_ReadUntilEOF(
 	{
 		while (CANBIT_TIM->CNT < next_sample);
 
-		bb_can_bits[bb_can_index] = (GPIOB->IDR & (1U << 8)) ? '1' : '0';
+		uint32_t idr = GPIOB->IDR;
+		uint8_t rx_high = (idr & (1U << 8)) ? 1U : 0U;
+		bb_can_bits[bb_can_index] = rx_high ? '1' : '0';
+		BB_SUMP_RECORD((idr & (1U << 9)) ? 1U : 0U, rx_high);
 
-		if (bb_can_bits[bb_can_index] == '1') recessive_count++;
+		if (rx_high) recessive_count++;
 		else recessive_count = 0U;
 
 		bb_can_index++;
@@ -697,6 +724,7 @@ RAMN_Result_t RAMN_BITBANG_Show(void)
 __attribute__((optimize("Ofast"))) RAMN_Result_t RAMN_BITBANG_Jam(void)
 {
 	BB_Start();
+	BB_SUMP_RESET();
 	TIMEOUT_TIM->CNT = 0;
 
 	while (TIMEOUT_TIM->CNT < timeout)
@@ -704,6 +732,8 @@ __attribute__((optimize("Ofast"))) RAMN_Result_t RAMN_BITBANG_Jam(void)
 		CANBIT_TIM->CNT = 0;
 		while (CANBIT_TIM->CNT < bit_quanta);
 		HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_9);
+		uint32_t idr = GPIOB->IDR;
+		BB_SUMP_RECORD((idr & (1U << 9)) ? 1U : 0U, (idr & (1U << 8)) ? 1U : 0U);
 	}
 	BB_Stop();
 	return RAMN_OK;
@@ -786,6 +816,7 @@ inline RAMN_Result_t RAMN_BITBANG_Read(void)
 	}
 
 	BB_Start();
+	BB_SUMP_RESET();
 	__disable_irq();
 
 	TIMEOUT_TIM->CNT = 0;
@@ -797,6 +828,7 @@ inline RAMN_Result_t RAMN_BITBANG_Read(void)
 		BB_Stop();
 		return RAMN_ERROR;
 	}
+	BB_SUMP_MARK_TRIGGER();
 
 	if (BB_ReadUntilEOF() != RAMN_OK)
 	{
@@ -842,6 +874,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_Dump(void)
 	uint32_t next_sample;
 
 	BB_Start();
+	BB_SUMP_RESET();
 	__disable_irq();
 
 	CANBIT_TIM->CNT = 0;
@@ -855,6 +888,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_Dump(void)
 		BB_Stop();
 		return RAMN_ERROR;
 	}
+	BB_SUMP_MARK_TRIGGER();
 
 	next_sample = sampling_quanta + (bb_can_index * bit_quanta);
 
@@ -862,7 +896,9 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_Dump(void)
 	{
 		while (CANBIT_TIM->CNT < next_sample);
 
-		bb_can_bits[bb_can_index] = (GPIOB->IDR & (1U << 8)) ? '1' : '0';
+		uint32_t idr = GPIOB->IDR;
+		bb_can_bits[bb_can_index] = (idr & (1U << 8)) ? '1' : '0';
+		BB_SUMP_RECORD((idr & (1U << 9)) ? 1U : 0U, (idr & (1U << 8)) ? 1U : 0U);
 		bb_can_index++;
 		next_sample += bit_quanta;
 	}
@@ -892,6 +928,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_Send(char *
 	if (trig != ARBID_TRIGGER_IDLE) RAMN_USB_SendStringFromTask("Warning: you should use the 'idle' trigger.\r");
 
 	BB_Start();
+	BB_SUMP_RESET();
 	__disable_irq();
 
 	CANBIT_TIM->CNT = 0;
@@ -905,6 +942,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_Send(char *
 		BB_Stop();
 		return RAMN_ERROR;
 	}
+	BB_SUMP_MARK_TRIGGER();
 
 	bb_can_index = 0;
 
@@ -915,16 +953,20 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_Send(char *
 	{
 		while (CANBIT_TIM->CNT < next_tx);
 
+		uint8_t tx_high;
 		if (bb_can_index < tx_len)
 		{
-			if (param[bb_can_index] == '1') GPIOB->BSRR = TX_REC;
-			else if (param[bb_can_index] == '0') GPIOB->BSRR = TX_DOM;
+			if (param[bb_can_index] == '1') { GPIOB->BSRR = TX_REC; tx_high = 1U; }
+			else if (param[bb_can_index] == '0') { GPIOB->BSRR = TX_DOM; tx_high = 0U; }
+			else tx_high = 1U;
 		}
-		else GPIOB->BSRR = TX_REC;
+		else { GPIOB->BSRR = TX_REC; tx_high = 1U; }
 
 		while (CANBIT_TIM->CNT < next_rx);
 
-		bb_can_bits[bb_can_index] = (GPIOB->IDR & (1U << 8)) ? '1' : '0';
+		uint8_t rx_high = (GPIOB->IDR & (1U << 8)) ? 1U : 0U;
+		bb_can_bits[bb_can_index] = rx_high ? '1' : '0';
+		BB_SUMP_RECORD(tx_high, rx_high);
 
 		bb_can_index++;
 		next_tx += bit_quanta;
@@ -954,6 +996,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_LoopOF(void
 	uint32_t recessive_seen = 0;
 
 	BB_Start();
+	BB_SUMP_RESET();
 	__disable_irq();
 
 	TIMEOUT_TIM->CNT = 0;
@@ -965,6 +1008,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_LoopOF(void
 		BB_Stop();
 		return RAMN_ERROR;
 	}
+	BB_SUMP_MARK_TRIGGER();
 
 	// Wait for 9 recessives
 	next_rx = (bb_can_index * bit_quanta) + sampling_quanta;
@@ -972,12 +1016,14 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_LoopOF(void
 	{
 		while (CANBIT_TIM->CNT < next_rx);
 
-		uint8_t bit = (GPIOB->IDR & PIN_RX) ? 1U : 0U;
+		uint32_t idr = GPIOB->IDR;
+		uint8_t bit = (idr & PIN_RX) ? 1U : 0U;
 
 		if (bit) recessive_seen++;
 		else recessive_seen = 0;
 
 		if (bb_can_index < BB_RX_BUFFER_SIZE - 1) bb_can_bits[bb_can_index] = bit ? '1' : '0';
+		BB_SUMP_RECORD((idr & (1U << 9)) ? 1U : 0U, bit);
 
 		bb_can_index++;
 		next_rx += bit_quanta;
@@ -993,13 +1039,15 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_LoopOF(void
 		{
 			while (CANBIT_TIM->CNT < next_tx);
 
-			if (i < 6) GPIOB->BSRR = TX_DOM; // technically, 1 should be  enough, but we send 6.
-			else GPIOB->BSRR = TX_REC;
+			uint8_t tx_high;
+			if (i < 6) { GPIOB->BSRR = TX_DOM; tx_high = 0U; }
+			else { GPIOB->BSRR = TX_REC; tx_high = 1U; }
 
 			while (CANBIT_TIM->CNT < next_rx);
 
 			uint8_t bit = (GPIOB->IDR & PIN_RX) ? 1U : 0U;
 			bb_can_bits[bb_can_index] = bit ? '1' : '0';
+			BB_SUMP_RECORD(tx_high, bit);
 
 			bb_can_index++;
 
@@ -1046,6 +1094,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_DenyOnce(ui
 	}
 
 	BB_Start();
+	BB_SUMP_RESET();
 	__disable_irq();
 
 	TIMEOUT_TIM->CNT = 0;
@@ -1056,19 +1105,22 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_DenyOnce(ui
 
 	if (Trigger() == RAMN_OK)
 	{
+		BB_SUMP_MARK_TRIGGER();
 		next_rx = (bit_quanta * bb_can_index) + sampling_quanta;
 
 		while (recessive_seen < target)
 		{
 			while (CANBIT_TIM->CNT < next_rx);
 
-			bit = (GPIOB->IDR & PIN_RX) ? 1U : 0U;
+			uint32_t idr = GPIOB->IDR;
+			bit = (idr & PIN_RX) ? 1U : 0U;
 
 			if (bit) recessive_seen++;
 			else recessive_seen = 0;
 
 			if (bb_can_index < BB_RX_BUFFER_SIZE - 1)
 				bb_can_bits[bb_can_index] = bit ? '1' : '0';
+			BB_SUMP_RECORD((idr & (1U << 9)) ? 1U : 0U, bit);
 
 			bb_can_index++;
 			next_rx += bit_quanta;
@@ -1082,6 +1134,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_DenyOnce(ui
 		while (CANBIT_TIM->CNT < next_rx);
 
 		bit = (GPIOB->IDR & PIN_RX) ? 1U : 0U;
+		BB_SUMP_RECORD(0U, bit);
 
 		if (bb_can_index < BB_RX_BUFFER_SIZE - 1)
 			bb_can_bits[bb_can_index] = bit ? '1' : '0';
@@ -1098,6 +1151,7 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_DenyOnce(ui
 			while (CANBIT_TIM->CNT < next_rx);
 
 			bit = (GPIOB->IDR & PIN_RX) ? 1U : 0U;
+			BB_SUMP_RECORD(1U, bit);
 
 			bb_can_bits[bb_can_index] = bit ? '1' : '0';
 
@@ -1172,5 +1226,612 @@ __attribute__((optimize("Ofast"))) inline RAMN_Result_t RAMN_BITBANG_Deny(uint8_
 
 	return RAMN_OK;
 }
+
+// ---- GS_USB + Bitbang Integration ----
+
+#if defined(ENABLE_GSUSB)
+
+// Build a complete CAN frame bitstream with bit stuffing and CRC from frame fields.
+// Returns the length of the bitstream, or 0 on error.
+static uint16_t BB_BuildFrameBitstream(uint32_t id, uint8_t ide, uint8_t rtr,
+                                        uint8_t dlc, const uint8_t *data,
+                                        char *out, uint16_t max_len)
+{
+	// Step 1: Build unstuffed bits for CRC computation
+	char unstuffed[200];
+	uint16_t us_idx = 0;
+
+	// SOF
+	unstuffed[us_idx++] = '0';
+
+	if (!ide)
+	{
+		// Standard 11-bit ID
+		for (int i = 10; i >= 0; i--) unstuffed[us_idx++] = ((id >> i) & 1) ? '1' : '0';
+		unstuffed[us_idx++] = rtr ? '1' : '0'; // RTR
+		unstuffed[us_idx++] = '0'; // IDE
+		unstuffed[us_idx++] = '0'; // R0
+	}
+	else
+	{
+		// Extended 29-bit ID
+		for (int i = 28; i >= 18; i--) unstuffed[us_idx++] = ((id >> i) & 1) ? '1' : '0';
+		unstuffed[us_idx++] = '1'; // SRR
+		unstuffed[us_idx++] = '1'; // IDE
+		for (int i = 17; i >= 0; i--) unstuffed[us_idx++] = ((id >> i) & 1) ? '1' : '0';
+		unstuffed[us_idx++] = rtr ? '1' : '0'; // RTR
+		unstuffed[us_idx++] = '0'; // R1
+		unstuffed[us_idx++] = '0'; // R0
+	}
+
+	// DLC (4 bits)
+	if (dlc > 8) dlc = 8;
+	for (int i = 3; i >= 0; i--) unstuffed[us_idx++] = ((dlc >> i) & 1) ? '1' : '0';
+
+	// Data (only for data frames)
+	if (!rtr)
+	{
+		for (uint8_t b = 0; b < dlc; b++)
+			for (int i = 7; i >= 0; i--) unstuffed[us_idx++] = ((data[b] >> i) & 1) ? '1' : '0';
+	}
+
+	// Step 2: Compute CRC-15 over unstuffed bits
+	uint16_t crc = 0;
+	const uint16_t poly = 0x4599;
+	for (uint16_t i = 0; i < us_idx; i++)
+	{
+		uint8_t bit = (unstuffed[i] == '1');
+		uint8_t msb = (crc >> 14) & 1;
+		crc = (crc << 1) & 0x7FFF;
+		if (bit ^ msb) crc ^= poly;
+	}
+
+	// Append CRC to unstuffed bits
+	for (int i = 14; i >= 0; i--) unstuffed[us_idx++] = ((crc >> i) & 1) ? '1' : '0';
+
+	// Step 3: Apply bit stuffing to generate output
+	uint16_t out_idx = 0;
+	uint8_t count = 0;
+	char last = 0;
+
+	for (uint16_t i = 0; i < us_idx; i++)
+	{
+		char bit = unstuffed[i];
+		if (out_idx >= max_len - 12) return 0; // leave room for tail
+		out[out_idx++] = bit;
+
+		if (bit == last) count++;
+		else { last = bit; count = 1; }
+
+		if (count == 5)
+		{
+			char stuffed = (bit == '1') ? '0' : '1';
+			if (out_idx >= max_len - 12) return 0;
+			out[out_idx++] = stuffed;
+			last = stuffed;
+			count = 1;
+		}
+	}
+
+	// Step 4: Append tail (not bit-stuffed):
+	// CRC_DEL(1) + ACK_SLOT(1, recessive - receivers will pull dominant) + ACK_DEL(1) + EOF(7x1)
+	const char *tail = "1111111111";
+	for (const char *p = tail; *p; p++)
+	{
+		if (out_idx >= max_len - 1) return 0;
+		out[out_idx++] = *p;
+	}
+
+	out[out_idx] = 0;
+	return out_idx;
+}
+
+// Parse a destuffed CAN frame bitstream into frame fields.
+// The input must already have bit stuffing removed (via CAN_KeepOnlyBits after CAN_Annotate).
+// Returns True if the frame was parsed and CRC is valid.
+static RAMN_Bool_t BB_ParseFrameFields(const char *bits, uint32_t len,
+                                        uint32_t *out_id, uint8_t *out_ide,
+                                        uint8_t *out_rtr, uint8_t *out_dlc,
+                                        uint8_t *out_data)
+{
+	uint32_t idx = 0;
+
+	if (len < 19) return False;
+	if (bits[0] != '0') return False; // SOF
+	idx = 1;
+
+	// ID (11 bits)
+	uint32_t id = 0;
+	for (uint8_t i = 0; i < 11; i++)
+		id = (id << 1) | (bits[idx++] == '1');
+
+	char srr_rtr = bits[idx++];
+	char ide = bits[idx++];
+
+	if (ide == '1')
+	{
+		// Extended frame
+		if (len < 39) return False;
+		uint32_t id_ext = 0;
+		for (uint8_t i = 0; i < 18; i++)
+			id_ext = (id_ext << 1) | (bits[idx++] == '1');
+		*out_id = (id << 18) | id_ext;
+		*out_ide = 1;
+		*out_rtr = (bits[idx++] == '1');
+		idx++; // R1
+		idx++; // R0
+	}
+	else
+	{
+		*out_id = id;
+		*out_ide = 0;
+		*out_rtr = (srr_rtr == '1');
+		idx++; // R0
+	}
+
+	// DLC (4 bits)
+	uint8_t dlc = 0;
+	for (uint8_t i = 0; i < 4; i++)
+		dlc = (dlc << 1) | (bits[idx++] == '1');
+	*out_dlc = dlc;
+
+	// Data
+	if (*out_rtr == 0 && dlc <= 8)
+	{
+		if (idx + (uint32_t)dlc * 8U + 15U > len) return False;
+		for (uint8_t b = 0; b < dlc; b++)
+		{
+			uint8_t byte_val = 0;
+			for (uint8_t i = 0; i < 8; i++)
+				byte_val = (byte_val << 1) | (bits[idx++] == '1');
+			out_data[b] = byte_val;
+		}
+	}
+	else
+	{
+		idx += (uint32_t)dlc * 8U;
+	}
+
+	// CRC check
+	if (idx + 15 > len) return False;
+	return CAN_CheckCRC(bits, idx);
+}
+
+// Extern declarations for GS_USB queues and task handles
+extern osThreadId_t RAMN_RxTask2Handle;
+extern StreamBufferHandle_t USBD_RxStreamBufferHandle;
+
+// Check the USB CDC stream buffer for an ESC byte (non-blocking).
+// Returns True if ESC was found.
+static RAMN_Bool_t BB_CheckForEsc(void)
+{
+	uint16_t commandLength;
+	size_t xBytesReceived;
+
+	xBytesReceived = xStreamBufferReceive(USBD_RxStreamBufferHandle, (void*)&commandLength, 2U, 0);
+	if (xBytesReceived != 2U || commandLength == 0) return False;
+
+	uint8_t rxBuf[64];
+	uint32_t remaining = commandLength;
+	while (remaining > 0)
+	{
+		uint32_t chunk = remaining;
+		if (chunk > sizeof(rxBuf)) chunk = sizeof(rxBuf);
+		size_t bytesRead = xStreamBufferReceive(USBD_RxStreamBufferHandle, (void*)rxBuf, chunk, pdMS_TO_TICKS(10));
+		if (bytesRead == 0) break;
+		remaining -= bytesRead;
+		for (uint32_t i = 0; i < bytesRead; i++)
+		{
+			if (rxBuf[i] == 0x1B) return True;
+		}
+	}
+	return False;
+}
+
+#if defined(ENABLE_GSUSB) && defined(ENABLE_SUMP_OLS)
+// Result codes for BB_CheckForEscOrSUMP().
+typedef enum {
+	BB_CHECK_NONE = 0,    // Nothing special detected
+	BB_CHECK_ESC  = 1,    // ESC byte detected — exit bb gsusb loop
+	BB_CHECK_SUMP = 2     // SUMP probe (0x02) detected — enter SUMP mode
+} BB_CheckResult_t;
+
+// Check the USB CDC stream buffer for ESC or SUMP probe byte (non-blocking).
+// Used by the bb gsusb loop to support both exit-on-ESC and SUMP auto-enter.
+static BB_CheckResult_t BB_CheckForEscOrSUMP(void)
+{
+	uint16_t commandLength;
+	size_t xBytesReceived;
+
+	xBytesReceived = xStreamBufferReceive(USBD_RxStreamBufferHandle, (void*)&commandLength, 2U, 0);
+	if (xBytesReceived != 2U || commandLength == 0) return BB_CHECK_NONE;
+
+	// Single-byte command containing SUMP_ID (0x02) = PulseView probe
+	if (commandLength == 1)
+	{
+		uint8_t byte;
+		xBytesReceived = xStreamBufferReceive(USBD_RxStreamBufferHandle, (void*)&byte, 1U, pdMS_TO_TICKS(10));
+		if (xBytesReceived == 1)
+		{
+			if (byte == 0x1B) return BB_CHECK_ESC;
+			if (byte == SUMP_ID) return BB_CHECK_SUMP;
+		}
+		return BB_CHECK_NONE;
+	}
+
+	// Multi-byte command: scan for ESC
+	uint8_t rxBuf[64];
+	uint32_t remaining = commandLength;
+	while (remaining > 0)
+	{
+		uint32_t chunk = remaining;
+		if (chunk > sizeof(rxBuf)) chunk = sizeof(rxBuf);
+		size_t bytesRead = xStreamBufferReceive(USBD_RxStreamBufferHandle, (void*)rxBuf, chunk, pdMS_TO_TICKS(10));
+		if (bytesRead == 0) break;
+		remaining -= bytesRead;
+		for (uint32_t i = 0; i < bytesRead; i++)
+		{
+			if (rxBuf[i] == 0x1B) return BB_CHECK_ESC;
+		}
+	}
+	return BB_CHECK_NONE;
+}
+#endif /* ENABLE_GSUSB && ENABLE_SUMP_OLS */
+
+RAMN_Result_t RAMN_BITBANG_GsUsbLoop(void)
+{
+	BaseType_t ret;
+	struct gs_host_frame *frame;
+	uint32_t parsed_id;
+	uint8_t parsed_ide, parsed_rtr, parsed_dlc;
+	uint8_t parsed_data[8];
+
+	// Save original settings
+	uint32_t saved_trig = trig;
+	uint16_t saved_timeout = timeout;
+
+	RAMN_USB_SendStringFromTask("Entering bb+GS_USB mode. Press ESC to exit.\r");
+
+	// Set bb mode flag BEFORE disabling FDCAN so the RX callback
+	// stops forwarding FDCAN frames to GS_USB during the transition.
+	RAMN_GSUSB_BBMode = True;
+
+	// Suspend RxTask2 so we exclusively own the GSUSB RecvQueue
+	vTaskSuspend(RAMN_RxTask2Handle);
+
+	BB_Start();
+	BB_SUMP_RESET();
+
+	for (;;)
+	{
+		// ---- Check for frames from host to send via bitbang ----
+		frame = NULL;
+		ret = xQueueReceive(RAMN_GSUSB_RecvQueueHandle, &frame, 0);
+		if (ret == pdPASS && frame != NULL)
+		{
+			uint32_t frame_id = frame->can_id & 0x1FFFFFFFU;
+			uint8_t frame_ide = (frame->can_id & CAN_EFF_FLAG) ? 1U : 0U;
+			uint8_t frame_rtr = (frame->can_id & CAN_RTR_FLAG) ? 1U : 0U;
+			uint8_t frame_dlc = frame->can_dlc;
+
+			char tx_bits[BB_RX_BUFFER_SIZE];
+			uint16_t tx_len = BB_BuildFrameBitstream(frame_id, frame_ide, frame_rtr,
+			                                          frame_dlc, frame->data,
+			                                          tx_bits, sizeof(tx_bits));
+			if (tx_len > 0)
+			{
+				// Send via bitbang (wait for idle, then transmit)
+				__disable_irq();
+				CANBIT_TIM->CNT = 0;
+				TIMEOUT_TIM->CNT = 0;
+				bb_can_index = 0;
+
+				// Wait for bus idle before transmitting
+				BB_WaitForIdleRecessive();
+				CANBIT_TIM->CNT = 0;
+
+				// Transmit the frame
+				uint32_t next_tx = bit_quanta;
+				uint32_t next_rx = bit_quanta + sampling_quanta;
+				while (bb_can_index < tx_len && bb_can_index < BB_RX_BUFFER_SIZE - 1)
+				{
+					while (CANBIT_TIM->CNT < next_tx);
+
+					uint8_t tx_high;
+					if (tx_bits[bb_can_index] == '1') { GPIOB->BSRR = TX_REC; tx_high = 1U; }
+					else { GPIOB->BSRR = TX_DOM; tx_high = 0U; }
+
+					while (CANBIT_TIM->CNT < next_rx);
+
+					uint8_t rx_high = (GPIOB->IDR & (1U << 8)) ? 1U : 0U;
+					BB_SUMP_RECORD(tx_high, rx_high);
+
+					bb_can_index++;
+					next_tx += bit_quanta;
+					next_rx += bit_quanta;
+				}
+
+				// Return to recessive
+				while (CANBIT_TIM->CNT < next_tx);
+				GPIOB->BSRR = TX_REC;
+				__enable_irq();
+
+				// Echo the frame back to host (GS_USB protocol expects TX echo)
+				ret = xQueueSendToBack(RAMN_GSUSB_SendQueueHandle, &frame, CAN_QUEUE_TIMEOUT);
+				if (ret != pdPASS)
+				{
+					// Failed to echo, return buffer to pool
+					xQueueSendToBack(RAMN_GSUSB_PoolQueueHandle, &frame, portMAX_DELAY);
+				}
+			}
+			else
+			{
+				// Build failed, return buffer to pool
+				xQueueSendToBack(RAMN_GSUSB_PoolQueueHandle, &frame, portMAX_DELAY);
+			}
+		}
+
+		// ---- Try to read a CAN frame via bitbang ----
+		trig = ARBID_TRIGGER_ANY;
+		timeout = 60; // ~50 ms at 1.22 kHz
+
+		__disable_irq();
+		TIMEOUT_TIM->CNT = 0;
+
+		RAMN_Result_t trig_result = Trigger();
+		if (trig_result == RAMN_OK)
+		{
+			BB_SUMP_MARK_TRIGGER();
+			if (BB_ReadUntilEOF() == RAMN_OK && bb_can_index > 7)
+			{
+				__enable_irq();
+
+				// Try to parse the captured frame
+				bb_can_bits[bb_can_index] = 0;
+				if (CAN_Annotate(bb_can_bits))
+				{
+					CAN_KeepOnlyBits(bb_can_bits);
+					uint32_t cleaned_len = RAMN_strlen(bb_can_bits);
+
+					if (BB_ParseFrameFields(bb_can_bits, cleaned_len,
+					                         &parsed_id, &parsed_ide, &parsed_rtr,
+					                         &parsed_dlc, parsed_data) == True)
+					{
+						// Get a buffer from the pool and deliver to GS_USB host
+						struct gs_host_frame *rx_frame = NULL;
+						ret = xQueueReceive(RAMN_GSUSB_PoolQueueHandle, &rx_frame, 0);
+						if (ret == pdPASS && rx_frame != NULL)
+						{
+							rx_frame->echo_id = 0xFFFFFFFFU;
+							rx_frame->can_id = parsed_id;
+							if (parsed_ide) rx_frame->can_id |= CAN_EFF_FLAG;
+							if (parsed_rtr) rx_frame->can_id |= CAN_RTR_FLAG;
+							rx_frame->can_dlc = parsed_dlc;
+							rx_frame->channel = 0;
+							rx_frame->flags = 0;
+							rx_frame->timestamp_us = (xTaskGetTickCount() * (1000000U / configTICK_RATE_HZ));
+
+							if (!parsed_rtr && parsed_dlc <= 8)
+							{
+								for (uint8_t i = 0; i < parsed_dlc; i++)
+									rx_frame->data[i] = parsed_data[i];
+							}
+
+							ret = xQueueSendToBack(RAMN_GSUSB_SendQueueHandle, &rx_frame, CAN_QUEUE_TIMEOUT);
+							if (ret != pdPASS)
+							{
+								xQueueSendToBack(RAMN_GSUSB_PoolQueueHandle, &rx_frame, portMAX_DELAY);
+							}
+						}
+					}
+				}
+			}
+			else
+			{
+				__enable_irq();
+			}
+		}
+		else
+		{
+			__enable_irq();
+		}
+
+		// ---- Check for ESC to exit, or SUMP probe to enter SUMP mode ----
+#if defined(ENABLE_SUMP_OLS)
+		{
+			BB_CheckResult_t chk = BB_CheckForEscOrSUMP();
+			if (chk == BB_CHECK_ESC)
+			{
+				break;
+			}
+			else if (chk == BB_CHECK_SUMP)
+			{
+				// PulseView detected — pause bb gsusb, serve SUMP data, then resume.
+				// Stop bitbang (restores FDCAN pins) so SUMP can use USB freely.
+				BB_Stop();
+
+				// Respond to the ID query that triggered auto-detect
+				RAMN_USB_FlushTxPipeline();
+				RAMN_USB_SendFromTask((const uint8_t*)"1ALS", 4U);
+
+				// Enter SUMP mode (blocks until ESC received from PulseView/terminal)
+				RAMN_SUMP_Enter();
+
+				// Resume bitbang for the next iteration of the gsusb loop
+				BB_Start();
+				BB_SUMP_RESET();
+			}
+		}
+#else
+		if (BB_CheckForEsc())
+		{
+			break;
+		}
+#endif
+	}
+
+	BB_Stop();
+
+	// Restore settings and resume RxTask2
+	trig = saved_trig;
+	timeout = saved_timeout;
+
+	vTaskResume(RAMN_RxTask2Handle);
+
+	// Clear bb mode flag AFTER FDCAN is re-enabled and RxTask2 is resumed,
+	// so normal GS_USB operations resume cleanly.
+	RAMN_GSUSB_BBMode = False;
+
+	RAMN_USB_SendStringFromTask("Exited bb+GS_USB mode.\r");
+
+	return RAMN_OK;
+}
+
+#endif /* ENABLE_GSUSB */
+
+#if defined(ENABLE_SUMP_OLS)
+
+// Print the SUMP compressed circular buffer as a compact VCD file.
+// Decompresses RLE entries on the fly, emitting only signal changes.
+// The output can be saved to a .vcd file and loaded into PulseView.
+RAMN_Result_t RAMN_BITBANG_Vcd(void)
+{
+	char num[24];
+
+	// Sample period in nanoseconds, derived from the rate recorded at capture time.
+	// Using the stored rate (rather than the current prescaler/bit_quanta settings)
+	// ensures the VCD timestamps match the bitrate of the actual capture, even if
+	// the user has since changed bb settings.
+	uint32_t rate = RAMN_SUMP_SampleRate;
+	uint64_t sample_period_ns = (rate > 0U) ? (1000000000ULL / (uint64_t)rate) : 2000ULL;
+
+	// Determine available compressed bytes.
+	uint32_t total_compressed = RAMN_SUMP_CompressedBytes;
+	uint32_t avail_bytes = total_compressed;
+	if (avail_bytes > SUMP_SAMPLE_BUFFER_SIZE) avail_bytes = SUMP_SAMPLE_BUFFER_SIZE;
+
+	// Find the oldest valid compressed byte.
+	uint32_t start_byte;
+	if (total_compressed > SUMP_SAMPLE_BUFFER_SIZE)
+	{
+		start_byte = RAMN_SUMP_WriteIndex;
+		if (RAMN_SUMP_Samples[start_byte] & SUMP_STORAGE_RLE_FLAG)
+		{
+			start_byte = (start_byte + 1U) & SUMP_SAMPLE_BUFFER_MASK;
+			avail_bytes--;
+		}
+	}
+	else
+	{
+		start_byte = 0;
+	}
+
+	// --- VCD header (one line for compactness) ---
+	RAMN_USB_SendStringFromTask(
+		"$timescale 1ns $end "
+		"$scope module RAMN $end "
+		"$var wire 1 ! TX $end "
+		"$var wire 1 \" RX $end "
+		"$var wire 1 # TRIG $end "
+		"$upscope $end "
+		"$enddefinitions $end\r");
+
+	if (avail_bytes == 0U)
+	{
+		// No data — emit idle at t=0.
+		RAMN_USB_SendStringFromTask("#0 $dumpvars 1! 1\" 0# $end\r");
+		return RAMN_OK;
+	}
+
+	// --- Walk compressed buffer forward, decompressing ---
+	uint32_t pos = start_byte;
+	uint32_t logical_idx = 0;
+	uint8_t prev_tx   = 0xFFU;
+	uint8_t prev_rx   = 0xFFU;
+	uint8_t prev_trig = 0xFFU;
+
+	for (uint32_t bi = 0; bi < avail_bytes; bi++)
+	{
+		uint8_t b = RAMN_SUMP_Samples[pos];
+		pos = (pos + 1U) & SUMP_SAMPLE_BUFFER_MASK;
+
+		if (b & SUMP_STORAGE_RLE_FLAG)
+		{
+			// RLE count: skip (count) logical samples — no value change during a run.
+			logical_idx += (b & 0x7FU);
+		}
+		else
+		{
+			// Sample byte.
+			uint8_t tx   = (b & SUMP_BIT_TX)   ? 1U : 0U;
+			uint8_t rx   = (b & SUMP_BIT_RX)   ? 1U : 0U;
+			uint8_t trig = (b & SUMP_BIT_TRIG) ? 1U : 0U;
+
+			if (logical_idx == 0U)
+			{
+				// Initial values at t=0.
+				RAMN_USB_SendStringFromTask("#0 $dumpvars ");
+				num[0] = tx ? '1' : '0'; num[1] = '!'; num[2] = ' '; num[3] = '\0';
+				RAMN_USB_SendStringFromTask(num);
+				num[0] = rx ? '1' : '0'; num[1] = '"'; num[2] = ' '; num[3] = '\0';
+				RAMN_USB_SendStringFromTask(num);
+				num[0] = trig ? '1' : '0'; num[1] = '#'; num[2] = ' '; num[3] = '\0';
+				RAMN_USB_SendStringFromTask(num);
+				RAMN_USB_SendStringFromTask("$end\r");
+			}
+			else if (tx != prev_tx || rx != prev_rx || trig != prev_trig)
+			{
+				// Emit timestamp.
+				uint8_t p = 0U;
+				num[p++] = '#';
+				uint64_t ts = (uint64_t)logical_idx * sample_period_ns;
+				p += uintToBCD(ts, &num[p]);
+				num[p++] = '\r';
+				num[p]   = '\0';
+				RAMN_USB_SendStringFromTask(num);
+
+				if (tx != prev_tx)
+				{
+					num[0] = tx ? '1' : '0'; num[1] = '!'; num[2] = ' '; num[3] = '\0';
+					RAMN_USB_SendStringFromTask(num);
+				}
+				if (rx != prev_rx)
+				{
+					num[0] = rx ? '1' : '0'; num[1] = '"'; num[2] = ' '; num[3] = '\0';
+					RAMN_USB_SendStringFromTask(num);
+				}
+				if (trig != prev_trig)
+				{
+					num[0] = trig ? '1' : '0'; num[1] = '#'; num[2] = ' '; num[3] = '\0';
+					RAMN_USB_SendStringFromTask(num);
+				}
+			}
+
+			prev_tx   = tx;
+			prev_rx   = rx;
+			prev_trig = trig;
+			logical_idx++;
+		}
+	}
+
+	// Emit a final timestamp so PulseView shows the full capture duration,
+	// including any trailing idle period compressed by RLE.
+	if (logical_idx > 0U)
+	{
+		uint8_t p = 0U;
+		num[p++] = '#';
+		uint64_t ts = (uint64_t)logical_idx * sample_period_ns;
+		p += uintToBCD(ts, &num[p]);
+		num[p++] = '\r';
+		num[p]   = '\0';
+		RAMN_USB_SendStringFromTask(num);
+	}
+
+	RAMN_USB_SendStringFromTask("\r");
+
+	return RAMN_OK;
+}
+
+#endif /* ENABLE_SUMP_OLS */
 
 #endif

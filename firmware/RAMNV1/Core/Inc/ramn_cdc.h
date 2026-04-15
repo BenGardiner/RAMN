@@ -41,6 +41,9 @@
 #ifdef ENABLE_BITBANG
 #include "ramn_bitbang.h"
 #endif
+#if defined(ENABLE_SUMP_OLS) && defined(ENABLE_BITBANG)
+#include "ramn_sump.h"
+#endif
 
 // Header and data for the "spoof ASAP" replace module of ECU A.
 extern FDCAN_TxHeaderTypeDef ReplaceTxHeader;
