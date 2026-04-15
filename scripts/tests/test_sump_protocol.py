@@ -52,11 +52,14 @@ SUMP_META_END          = 0x00
 # Configuration from ramn_sump.h
 SUMP_SAMPLE_BUFFER_SIZE = 4096
 SUMP_SAMPLE_BUFFER_MASK = SUMP_SAMPLE_BUFFER_SIZE - 1
-SUMP_REPORTED_SAMPLE_MEM = 1048576   # 1M — advertised to PulseView (RLE-inflated)
-SUMP_MAX_SAMPLE_RATE    = 1000000
+SUMP_DEFAULT_SAMPLE_MEM = 1048576    # Default read_count / delay_count
 SUMP_NUM_PROBES         = 3
 SUMP_EXIT_CHAR          = 0x1B
 SUMP_DEVICE_NAME        = "RAMN"
+
+# Storage RLE constants
+SUMP_STORAGE_RLE_FLAG   = 0x80   # Bit 7 set = RLE count byte
+SUMP_STORAGE_RLE_MAX    = 127    # Max additional repeats per RLE byte
 
 # CAN pin mapping
 SUMP_PIN_TX_BIT = 0  # Channel 0: CAN TX (PB9)
@@ -89,7 +92,14 @@ class MockSUMPDevice:
     """
     A pure-Python mock of the RAMN SUMP state machine for testing.
     Mirrors the logic in ramn_sump.c without hardware dependencies.
-    Uses a circular buffer with trigger position tracking.
+    Uses a circular buffer with RLE-compressed storage and trigger
+    position tracking.
+
+    Storage format:
+      - Sample byte  (bit 7 = 0): bits 2:0 = TX | RX | TRIG
+      - RLE count    (bit 7 = 1): bits 6:0 = additional repeats (1-127)
+    A sample byte + optional RLE byte form a "pair".  When the RLE count
+    reaches 127, the next identical sample starts a new pair (no chaining).
     """
 
     STATE_IDLE    = 0
@@ -99,8 +109,8 @@ class MockSUMPDevice:
     def __init__(self):
         self.state = self.STATE_IDLE
         self.divider = 0
-        self.read_count = SUMP_REPORTED_SAMPLE_MEM
-        self.delay_count = SUMP_REPORTED_SAMPLE_MEM
+        self.read_count = SUMP_DEFAULT_SAMPLE_MEM
+        self.delay_count = SUMP_DEFAULT_SAMPLE_MEM
         self.trigger_mask = [0, 0, 0, 0]
         self.trigger_values = [0, 0, 0, 0]
         self.flags = 0
@@ -110,62 +120,174 @@ class MockSUMPDevice:
         self.cmd_buf_idx = 0
         self.output = bytearray()
         self.exited = False
-        # Circular sample buffer (simulates bitbang capture)
+        # Compressed circular sample buffer (simulates bitbang capture)
         self.samples = bytearray(SUMP_SAMPLE_BUFFER_SIZE)
-        self.sample_count = 0       # Total samples written (linear counter)
-        self.write_index = 0        # Circular buffer write position
-        self.trigger_index = SUMP_NO_TRIGGER  # Linear index of trigger
-        # Auto-capture callback removed: SUMP_RUN now just sends whatever
-        # is in the buffer (idle if no prior bitbang capture).
+        self.sample_count = 0           # Total logical samples written
+        self.compressed_bytes = 0       # Total compressed bytes written
+        self.write_index = 0            # Circular buffer write position
+        self.trigger_index = SUMP_NO_TRIGGER
+        self.prev_sample = 0xFF         # Last sample value for RLE
+        self.sample_rate = 500000       # Default 500 kHz
 
     def record_sample(self, tx_high, rx_high):
-        """Record a TX+RX sample into the circular sample buffer."""
+        """Record a TX+RX sample into the compressed circular buffer."""
         sample = 0
         if tx_high:
             sample |= SUMP_BIT_TX
         if rx_high:
             sample |= SUMP_BIT_RX
-        self.samples[self.write_index] = sample
-        self.write_index = (self.write_index + 1) & SUMP_SAMPLE_BUFFER_MASK
+
         self.sample_count += 1
+
+        # Try to extend an existing RLE run.
+        if self.compressed_bytes > 0 and sample == self.prev_sample:
+            prev_idx = (self.write_index - 1) & SUMP_SAMPLE_BUFFER_MASK
+            prev_byte = self.samples[prev_idx]
+
+            if prev_byte & SUMP_STORAGE_RLE_FLAG:
+                if (prev_byte & 0x7F) < SUMP_STORAGE_RLE_MAX:
+                    self.samples[prev_idx] = prev_byte + 1
+                    return
+                # RLE full — fall through to new sample byte
+            else:
+                # Previous is a sample byte — start new RLE(1)
+                wi = self.write_index
+                self.samples[wi] = SUMP_STORAGE_RLE_FLAG | 1
+                self.write_index = (wi + 1) & SUMP_SAMPLE_BUFFER_MASK
+                self.compressed_bytes += 1
+                return
+
+        # Write new sample byte.
+        wi = self.write_index
+        self.samples[wi] = sample
+        self.write_index = (wi + 1) & SUMP_SAMPLE_BUFFER_MASK
+        self.prev_sample = sample
+        self.compressed_bytes += 1
 
     def mark_trigger(self):
         """Mark the current position as the trigger point.
-        Sets the TRIG bit on the most recently written sample."""
+        Splits an RLE run if needed so the trigger sample gets TRIG bit."""
+        if self.compressed_bytes == 0:
+            return
+
         self.trigger_index = self.sample_count
-        prev = (self.write_index - 1) & SUMP_SAMPLE_BUFFER_MASK
-        self.samples[prev] |= SUMP_BIT_TRIG
+
+        prev_idx = (self.write_index - 1) & SUMP_SAMPLE_BUFFER_MASK
+        prev_byte = self.samples[prev_idx]
+
+        if prev_byte & SUMP_STORAGE_RLE_FLAG:
+            count = prev_byte & 0x7F
+            if count > 1:
+                self.samples[prev_idx] = SUMP_STORAGE_RLE_FLAG | (count - 1)
+            else:
+                self.write_index = prev_idx
+                self.compressed_bytes -= 1
+
+            trig_sample = self.prev_sample | SUMP_BIT_TRIG
+            wi = self.write_index
+            self.samples[wi] = trig_sample
+            self.write_index = (wi + 1) & SUMP_SAMPLE_BUFFER_MASK
+            self.prev_sample = trig_sample
+            self.compressed_bytes += 1
+        else:
+            self.samples[prev_idx] |= SUMP_BIT_TRIG
+            self.prev_sample |= SUMP_BIT_TRIG
 
     def reset_capture(self):
         """Reset the sample buffer before a new bitbang operation."""
         self.sample_count = 0
+        self.compressed_bytes = 0
         self.write_index = 0
         self.trigger_index = SUMP_NO_TRIGGER
+        self.prev_sample = 0xFF
+
+    # ---- Compressed buffer helpers for readback ----
+
+    def _count_logical_samples(self, start_byte, avail_bytes):
+        """Count logical samples in the available compressed data."""
+        logical = 0
+        pos = start_byte
+        for _ in range(avail_bytes):
+            b = self.samples[pos]
+            if b & SUMP_STORAGE_RLE_FLAG:
+                logical += (b & 0x7F)
+            else:
+                logical += 1
+            pos = (pos + 1) & SUMP_SAMPLE_BUFFER_MASK
+        return logical
+
+    def _read_run_reverse(self, pos, bytes_left):
+        """Read one compressed run in reverse. Returns (new_pos, new_bytes_left, sample, count)."""
+        b = self.samples[pos]
+        pos = (pos - 1) & SUMP_SAMPLE_BUFFER_MASK
+        bytes_left -= 1
+
+        if b & SUMP_STORAGE_RLE_FLAG:
+            c = b & 0x7F
+            if bytes_left > 0:
+                sample = self.samples[pos]
+                pos = (pos - 1) & SUMP_SAMPLE_BUFFER_MASK
+                bytes_left -= 1
+                return pos, bytes_left, sample, c + 1
+            else:
+                return pos, bytes_left, SUMP_BIT_TX | SUMP_BIT_RX, c
+        else:
+            return pos, bytes_left, b, 1
+
+    def _emit_run(self, sample, emit_count, prev_sample, pending_rle, rle_enabled, max_rle):
+        """Emit a run of identical samples using SUMP protocol encoding.
+        Returns (new_prev_sample, new_pending_rle)."""
+        if not rle_enabled:
+            for _ in range(emit_count):
+                self._emit_sample(sample)
+            return prev_sample, pending_rle
+
+        if sample != prev_sample:
+            # Flush pending RLE from previous value.
+            if pending_rle > 0:
+                while pending_rle > max_rle:
+                    self._emit_rle_count(max_rle)
+                    self._emit_sample(prev_sample)
+                    pending_rle -= max_rle
+                    pending_rle -= 1
+                if pending_rle > 0:
+                    self._emit_rle_count(pending_rle)
+            self._emit_sample(sample)
+            prev_sample = sample
+            pending_rle = emit_count - 1
+        else:
+            pending_rle += emit_count
+
+        # Flush at max_rle boundaries.
+        while pending_rle > max_rle:
+            self._emit_rle_count(max_rle)
+            self._emit_sample(sample)
+            pending_rle -= max_rle
+            pending_rle -= 1
+
+        return prev_sample, pending_rle
 
     def send_captured_samples(self):
-        """Send pre-recorded samples windowed around the trigger point.
+        """Send pre-recorded compressed samples windowed around the trigger point.
         Supports RLE compression when SUMP_FLAG_RLE is set.
-        Uses sample_width to send the correct number of bytes per sample."""
-        total_written = self.sample_count
+        Decompresses from the compressed circular buffer."""
+        total_logical = self.sample_count
+        total_compressed = self.compressed_bytes
         trig_idx = self.trigger_index
-
-        available = min(total_written, SUMP_SAMPLE_BUFFER_SIZE)
         rle_enabled = bool(self.flags & SUMP_FLAG_RLE)
 
         read_count = self.read_count
-        if rle_enabled:
-            if read_count > SUMP_REPORTED_SAMPLE_MEM:
-                read_count = SUMP_REPORTED_SAMPLE_MEM
-            if read_count == 0:
-                read_count = SUMP_REPORTED_SAMPLE_MEM
-        else:
-            if read_count > SUMP_SAMPLE_BUFFER_SIZE:
-                read_count = SUMP_SAMPLE_BUFFER_SIZE
-            if read_count == 0:
-                read_count = SUMP_SAMPLE_BUFFER_SIZE
+        max_requestable = SUMP_DEFAULT_SAMPLE_MEM if rle_enabled else SUMP_SAMPLE_BUFFER_SIZE
+        if read_count > max_requestable:
+            read_count = max_requestable
+        if read_count == 0:
+            read_count = max_requestable
 
-        if available == 0:
-            # No samples: send all-recessive (TX+RX high, no trigger)
+        # Available compressed bytes.
+        avail_bytes = min(total_compressed, SUMP_SAMPLE_BUFFER_SIZE)
+
+        # No captured data: send idle.
+        if avail_bytes == 0 or total_logical == 0:
             idle = SUMP_BIT_TX | SUMP_BIT_RX
             if rle_enabled and read_count > 1:
                 max_rle = self._max_rle_count()
@@ -183,71 +305,95 @@ class MockSUMPDevice:
                     self._emit_sample(idle)
             return
 
+        # Oldest valid compressed byte.
+        if total_compressed > SUMP_SAMPLE_BUFFER_SIZE:
+            start_byte = self.write_index
+            if self.samples[start_byte] & SUMP_STORAGE_RLE_FLAG:
+                start_byte = (start_byte + 1) & SUMP_SAMPLE_BUFFER_MASK
+                avail_bytes -= 1
+        else:
+            start_byte = 0
+
+        available_logical = self._count_logical_samples(start_byte, avail_bytes)
+        oldest_logical = total_logical - available_logical
+
+        # Window around trigger.
         delay_count = self.delay_count
         if delay_count > read_count:
             delay_count = read_count
 
-        if trig_idx != SUMP_NO_TRIGGER and trig_idx <= total_written:
+        if trig_idx != SUMP_NO_TRIGGER and trig_idx <= total_logical:
             end_linear = trig_idx + delay_count
-            if end_linear > total_written:
-                end_linear = total_written
+            if end_linear > total_logical:
+                end_linear = total_logical
             start_linear = (end_linear - read_count) if end_linear > read_count else 0
         else:
-            end_linear = total_written
-            start_linear = (total_written - read_count) if total_written > read_count else 0
+            end_linear = total_logical
+            start_linear = (total_logical - read_count) if total_logical > read_count else 0
 
-        # Don't read overwritten samples
-        if total_written > SUMP_SAMPLE_BUFFER_SIZE:
-            oldest_available = total_written - SUMP_SAMPLE_BUFFER_SIZE
-            if start_linear < oldest_available:
-                start_linear = oldest_available
+        if start_linear < oldest_logical:
+            start_linear = oldest_logical
 
         send_count = end_linear - start_linear
         if send_count > read_count:
             send_count = read_count
 
-        if rle_enabled:
-            # RLE encoding: compress consecutive identical samples.
-            # Max count per RLE word depends on sample_width.
-            max_rle = self._max_rle_count()
-            idx = end_linear
-            sent = 0
-            prev_sample = 0xFF  # Invalid initial
-            run_count = 0
+        # Reverse walk.
+        rpos = (self.write_index - 1) & SUMP_SAMPLE_BUFFER_MASK
+        bytes_left = avail_bytes
+        logical_pos = total_logical
+        sent = 0
 
-            while sent < send_count and idx > start_linear:
-                idx -= 1
-                circ_idx = idx & SUMP_SAMPLE_BUFFER_MASK
-                sample = self.samples[circ_idx]
+        max_rle = self._max_rle_count()
+        prev_sample = 0xFF
+        pending_rle = 0
 
-                if sample == prev_sample and run_count < max_rle:
-                    run_count += 1
-                else:
-                    if run_count > 0:
-                        self._emit_rle_count(run_count)
-                    if sample != prev_sample:
-                        self._emit_sample(sample)
-                        prev_sample = sample
-                        run_count = 0
-                    else:
-                        # Same sample but hit max count — re-emit sample
-                        self._emit_sample(sample)
-                        run_count = 0
-                sent += 1
+        # Phase 1: skip runs newer than end_linear.
+        while logical_pos > end_linear and bytes_left > 0:
+            rpos, bytes_left, rsample, rcount = self._read_run_reverse(rpos, bytes_left)
+            if logical_pos - rcount >= end_linear:
+                logical_pos -= rcount
+            else:
+                to_skip = logical_pos - end_linear
+                rcount -= to_skip
+                logical_pos = end_linear
+                to_emit = min(rcount, send_count)
+                prev_sample, pending_rle = self._emit_run(
+                    rsample, to_emit, prev_sample, pending_rle, rle_enabled, max_rle)
+                logical_pos -= to_emit
+                sent += to_emit
 
-            # Flush final run
-            if run_count > 0:
-                self._emit_rle_count(run_count)
+        # Phase 2: emit runs.
+        while sent < send_count and bytes_left > 0 and logical_pos > start_linear:
+            rpos, bytes_left, rsample, rcount = self._read_run_reverse(rpos, bytes_left)
+            to_emit = rcount
+            if logical_pos - to_emit < start_linear:
+                to_emit = logical_pos - start_linear
+            if to_emit > send_count - sent:
+                to_emit = send_count - sent
+            prev_sample, pending_rle = self._emit_run(
+                rsample, to_emit, prev_sample, pending_rle, rle_enabled, max_rle)
+            logical_pos -= to_emit
+            sent += to_emit
 
-            # Pad to reach read_count with idle samples (RLE-compressed)
-            if sent < read_count:
-                pad_count = read_count - sent
-                idle = SUMP_BIT_TX | SUMP_BIT_RX
+        # Flush pending RLE.
+        if rle_enabled and pending_rle > 0:
+            while pending_rle > max_rle:
+                self._emit_rle_count(max_rle)
+                self._emit_sample(prev_sample)
+                pending_rle -= max_rle
+                pending_rle -= 1
+            if pending_rle > 0:
+                self._emit_rle_count(pending_rle)
 
+        # Phase 3: pad with idle.
+        if sent < read_count:
+            pad_count = read_count - sent
+            idle = SUMP_BIT_TX | SUMP_BIT_RX
+            if rle_enabled:
                 if prev_sample != idle:
                     self._emit_sample(idle)
                     pad_count -= 1
-
                 while pad_count > 0:
                     batch = min(pad_count, max_rle)
                     self._emit_rle_count(batch)
@@ -255,21 +401,9 @@ class MockSUMPDevice:
                     if pad_count > 0:
                         self._emit_sample(idle)
                         pad_count -= 1
-        else:
-            # Non-RLE path: send samples one by one
-            idx = end_linear
-            sent = 0
-            while sent < send_count and idx > start_linear:
-                idx -= 1
-                circ_idx = idx & SUMP_SAMPLE_BUFFER_MASK
-                s = self.samples[circ_idx]
-                self._emit_sample(s)
-                sent += 1
-
-            # Pad with idle samples if needed
-            while sent < read_count:
-                self._emit_sample(SUMP_BIT_TX | SUMP_BIT_RX)
-                sent += 1
+            else:
+                for _ in range(pad_count):
+                    self._emit_sample(idle)
 
     def _emit_sample(self, sample):
         """Emit a SUMP sample word using the current sample_width."""
@@ -347,12 +481,13 @@ class MockSUMPDevice:
         # Device name
         self.send_byte(SUMP_META_NAME)
         self.send_bytes(SUMP_DEVICE_NAME.encode("ascii") + b"\x00")
-        # Sample memory (big-endian) — report the RLE-inflated window
+        # Sample memory (big-endian) — actual captured samples or minimum
+        reported_mem = max(self.sample_count, SUMP_SAMPLE_BUFFER_SIZE)
         self.send_byte(SUMP_META_SAMPLE_MEM)
-        self.send_bytes(struct.pack(">I", SUMP_REPORTED_SAMPLE_MEM))
-        # Max sample rate (big-endian)
+        self.send_bytes(struct.pack(">I", reported_mem))
+        # Sample rate (big-endian) — actual capture rate
         self.send_byte(SUMP_META_SAMPLE_RATE)
-        self.send_bytes(struct.pack(">I", SUMP_MAX_SAMPLE_RATE))
+        self.send_bytes(struct.pack(">I", self.sample_rate))
         # Number of probes
         self.send_byte(SUMP_META_NUM_PROBES)
         self.send_byte(SUMP_NUM_PROBES)
@@ -365,8 +500,8 @@ class MockSUMPDevice:
     def reset(self):
         self.state = self.STATE_IDLE
         self.divider = 0
-        self.read_count = SUMP_REPORTED_SAMPLE_MEM
-        self.delay_count = SUMP_REPORTED_SAMPLE_MEM
+        self.read_count = SUMP_DEFAULT_SAMPLE_MEM
+        self.delay_count = SUMP_DEFAULT_SAMPLE_MEM
         self.flags = 0
         self.sample_width = 4  # Default: all channel groups enabled
         for i in range(4):
@@ -578,8 +713,7 @@ class TestSUMPConstants(unittest.TestCase):
     def test_device_configuration(self):
         self.assertEqual(SUMP_SAMPLE_BUFFER_SIZE, 4096)
         self.assertEqual(SUMP_SAMPLE_BUFFER_MASK, 4095)
-        self.assertEqual(SUMP_REPORTED_SAMPLE_MEM, 1048576)
-        self.assertEqual(SUMP_MAX_SAMPLE_RATE, 1000000)
+        self.assertEqual(SUMP_DEFAULT_SAMPLE_MEM, 1048576)
         self.assertEqual(SUMP_NUM_PROBES, 3)
         self.assertEqual(SUMP_EXIT_CHAR, 0x1B)
         self.assertEqual(SUMP_DEVICE_NAME, "RAMN")
@@ -589,6 +723,8 @@ class TestSUMPConstants(unittest.TestCase):
         self.assertEqual(SUMP_FLAG_RLE, 0x0100)
         self.assertEqual(SUMP_RLE_MARKER, 0x80)
         self.assertEqual(SUMP_NO_TRIGGER, 0xFFFFFFFF)
+        self.assertEqual(SUMP_STORAGE_RLE_FLAG, 0x80)
+        self.assertEqual(SUMP_STORAGE_RLE_MAX, 127)
 
 
 class TestSUMPIDResponse(unittest.TestCase):
@@ -625,7 +761,8 @@ class TestSUMPMetadata(unittest.TestCase):
         output = bytes(dev.output)
         idx = output.index(SUMP_META_SAMPLE_MEM)
         mem = struct.unpack(">I", output[idx+1:idx+5])[0]
-        self.assertEqual(mem, SUMP_REPORTED_SAMPLE_MEM)
+        # With no capture, reports at least SUMP_SAMPLE_BUFFER_SIZE
+        self.assertEqual(mem, SUMP_SAMPLE_BUFFER_SIZE)
 
     def test_metadata_contains_sample_rate(self):
         dev = MockSUMPDevice()
@@ -633,7 +770,33 @@ class TestSUMPMetadata(unittest.TestCase):
         output = bytes(dev.output)
         idx = output.index(SUMP_META_SAMPLE_RATE)
         rate = struct.unpack(">I", output[idx+1:idx+5])[0]
-        self.assertEqual(rate, SUMP_MAX_SAMPLE_RATE)
+        # Default sample rate is 500 kHz (500 kbps CAN)
+        self.assertEqual(rate, 500000)
+
+    def test_metadata_sample_memory_reflects_capture(self):
+        """After recording many compressed samples, metadata reflects actual count."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        # Record 10000 identical samples — compresses heavily
+        for _ in range(10000):
+            dev.record_sample(1, 1)
+        dev.output.clear()
+        dev.process_byte(SUMP_DESC)
+        output = bytes(dev.output)
+        idx = output.index(SUMP_META_SAMPLE_MEM)
+        mem = struct.unpack(">I", output[idx+1:idx+5])[0]
+        self.assertEqual(mem, 10000)
+
+    def test_metadata_sample_rate_reflects_setting(self):
+        """Sample rate in metadata reflects the current capture rate."""
+        dev = MockSUMPDevice()
+        dev.sample_rate = 250000  # 250 kHz
+        dev.output.clear()
+        dev.process_byte(SUMP_DESC)
+        output = bytes(dev.output)
+        idx = output.index(SUMP_META_SAMPLE_RATE)
+        rate = struct.unpack(">I", output[idx+1:idx+5])[0]
+        self.assertEqual(rate, 250000)
 
     def test_metadata_contains_num_probes(self):
         dev = MockSUMPDevice()
@@ -726,8 +889,8 @@ class TestSUMPReset(unittest.TestCase):
         for b in encode_sump_cnt(256, 128):
             dev.process_byte(b)
         dev.process_byte(SUMP_RESET)
-        self.assertEqual(dev.read_count, SUMP_REPORTED_SAMPLE_MEM)
-        self.assertEqual(dev.delay_count, SUMP_REPORTED_SAMPLE_MEM)
+        self.assertEqual(dev.read_count, SUMP_DEFAULT_SAMPLE_MEM)
+        self.assertEqual(dev.delay_count, SUMP_DEFAULT_SAMPLE_MEM)
 
     def test_reset_does_not_produce_output(self):
         dev = MockSUMPDevice()
@@ -1121,7 +1284,7 @@ class TestSUMPCommandSequence(unittest.TestCase):
         dev.process_byte(SUMP_RESET)
         self.assertEqual(dev.divider, 0)
         self.assertEqual(dev.trigger_mask[0], 0)
-        self.assertEqual(dev.read_count, SUMP_REPORTED_SAMPLE_MEM)
+        self.assertEqual(dev.read_count, SUMP_DEFAULT_SAMPLE_MEM)
 
     def test_multiple_resets_are_safe(self):
         """Sending many resets (as PulseView does) should be safe."""
@@ -1625,10 +1788,10 @@ class TestSUMPPrePostTriggerWindowing(unittest.TestCase):
         self.assertEqual(dev.read_count, 256)
         self.assertEqual(dev.delay_count, 128)
 
-    def test_default_delay_equals_reported_sample_mem(self):
-        """Default delay_count = SUMP_REPORTED_SAMPLE_MEM (all post-trigger)."""
+    def test_default_delay_equals_default_sample_mem(self):
+        """Default delay_count = SUMP_DEFAULT_SAMPLE_MEM (all post-trigger)."""
         dev = MockSUMPDevice()
-        self.assertEqual(dev.delay_count, SUMP_REPORTED_SAMPLE_MEM)
+        self.assertEqual(dev.delay_count, SUMP_DEFAULT_SAMPLE_MEM)
 
 
 class TestSUMPCDCBinaryForwarding(unittest.TestCase):
@@ -1823,13 +1986,13 @@ class TestSUMPRLECompression(unittest.TestCase):
         self.assertTrue(dev.output[7] & SUMP_RLE_MARKER)
 
     def test_rle_large_reported_window(self):
-        """The reported sample memory is 1M (SUMP_REPORTED_SAMPLE_MEM)."""
+        """With no capture, metadata reports at least SUMP_SAMPLE_BUFFER_SIZE."""
         dev = MockSUMPDevice()
         dev.process_byte(SUMP_DESC)
         output = bytes(dev.output)
         idx = output.index(SUMP_META_SAMPLE_MEM)
         mem = struct.unpack(">I", output[idx+1:idx+5])[0]
-        self.assertEqual(mem, SUMP_REPORTED_SAMPLE_MEM)
+        self.assertGreaterEqual(mem, SUMP_SAMPLE_BUFFER_SIZE)
 
     def test_rle_read_count_can_exceed_buffer_size(self):
         """With RLE, read_count can exceed SUMP_SAMPLE_BUFFER_SIZE."""
@@ -2256,6 +2419,139 @@ class TestSampleWidthOutput(unittest.TestCase):
                 total_samples += 1
             i += 1
         self.assertEqual(total_samples, 256)
+
+
+class TestSUMPStorageCompression(unittest.TestCase):
+    """Test that RLE storage compression increases effective sample capacity."""
+
+    def test_identical_samples_compress_in_storage(self):
+        """Recording identical samples uses fewer compressed bytes than raw."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        for _ in range(200):
+            dev.record_sample(1, 1)
+        self.assertEqual(dev.sample_count, 200)
+        # 200 identical samples: 1 sample byte + 1 RLE(127) + 1 sample byte + 1 RLE(71) = 4 bytes
+        self.assertLess(dev.compressed_bytes, 200)
+
+    def test_alternating_samples_no_compression(self):
+        """Alternating samples don't compress."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        for i in range(100):
+            tx = i % 2 == 0
+            dev.record_sample(tx, not tx)
+        self.assertEqual(dev.sample_count, 100)
+        self.assertEqual(dev.compressed_bytes, 100)
+
+    def test_rle_count_maxes_at_127(self):
+        """A single RLE count byte maxes at 127 additional repeats."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        # Record 129 identical samples: sample + RLE(127) + new sample
+        for _ in range(129):
+            dev.record_sample(1, 1)
+        self.assertEqual(dev.sample_count, 129)
+        # Compressed: sample_byte + RLE(127) + sample_byte = 3 bytes
+        self.assertEqual(dev.compressed_bytes, 3)
+        # Buffer: [0x03, 0xFF, 0x03]
+        self.assertEqual(dev.samples[0], SUMP_BIT_TX | SUMP_BIT_RX)
+        self.assertEqual(dev.samples[1], SUMP_STORAGE_RLE_FLAG | SUMP_STORAGE_RLE_MAX)
+        self.assertEqual(dev.samples[2], SUMP_BIT_TX | SUMP_BIT_RX)
+
+    def test_storage_rle_much_greater_than_raw(self):
+        """With compression, buffer holds many more logical samples than raw."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        # Record 50000 identical idle samples
+        for _ in range(50000):
+            dev.record_sample(1, 1)
+        self.assertEqual(dev.sample_count, 50000)
+        # These should compress to much less than 4096 bytes
+        self.assertLess(dev.compressed_bytes, SUMP_SAMPLE_BUFFER_SIZE)
+
+    def test_compressed_readback_matches_logical_samples(self):
+        """SUMP readback decompresses stored RLE to yield correct logical samples."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        # Record a pattern: 10 idle, 5 active, 10 idle
+        for _ in range(10):
+            dev.record_sample(1, 1)  # idle 0x03
+        for _ in range(5):
+            dev.record_sample(0, 0)  # active 0x00
+        for _ in range(10):
+            dev.record_sample(1, 1)  # idle 0x03
+        # Configure for non-RLE, 1-byte output
+        flags = SUMP_FLAG_CHANGRP_2 | SUMP_FLAG_CHANGRP_3 | SUMP_FLAG_CHANGRP_4
+        for b in encode_sump_flags(flags):
+            dev.process_byte(b)
+        dev.read_count = 25
+        dev.delay_count = 25
+        dev.output.clear()
+        dev.process_byte(SUMP_RUN)
+        # 25 samples, each 1 byte, newest to oldest
+        data = list(dev.output)
+        self.assertEqual(len(data), 25)
+        # Reverse to get oldest-to-newest
+        data.reverse()
+        idle = SUMP_BIT_TX | SUMP_BIT_RX
+        for i in range(10):
+            self.assertEqual(data[i], idle, f"sample {i}")
+        for i in range(10, 15):
+            self.assertEqual(data[i], 0x00, f"sample {i}")
+        for i in range(15, 25):
+            self.assertEqual(data[i], idle, f"sample {i}")
+
+    def test_trigger_in_rle_run_splits_correctly(self):
+        """mark_trigger in the middle of an RLE run splits it properly."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        for _ in range(50):
+            dev.record_sample(1, 1)
+        dev.mark_trigger()
+        self.assertEqual(dev.trigger_index, 50)
+        # The trigger sample should have TRIG bit set
+        # Find it: it's the most recently written sample byte
+        prev_idx = (dev.write_index - 1) & SUMP_SAMPLE_BUFFER_MASK
+        trig_sample = dev.samples[prev_idx]
+        self.assertFalse(trig_sample & SUMP_STORAGE_RLE_FLAG)  # Must be sample, not RLE
+        self.assertTrue(trig_sample & SUMP_BIT_TRIG)
+
+    def test_reset_clears_compression_state(self):
+        """reset_capture clears all compression state."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        for _ in range(100):
+            dev.record_sample(1, 1)
+        self.assertGreater(dev.compressed_bytes, 0)
+        dev.reset_capture()
+        self.assertEqual(dev.compressed_bytes, 0)
+        self.assertEqual(dev.prev_sample, 0xFF)
+
+    def test_metadata_reflects_compressed_sample_count(self):
+        """After a large compressed capture, metadata reports actual logical count."""
+        dev = MockSUMPDevice()
+        dev.reset_capture()
+        # Record 10000 compressed samples (way more than buffer would hold raw)
+        for _ in range(10000):
+            dev.record_sample(1, 1)
+        dev.output.clear()
+        dev.process_byte(SUMP_DESC)
+        output = bytes(dev.output)
+        idx = output.index(SUMP_META_SAMPLE_MEM)
+        mem = struct.unpack(">I", output[idx+1:idx+5])[0]
+        self.assertEqual(mem, 10000)
+
+    def test_sample_rate_in_metadata(self):
+        """Metadata includes the actual capture sample rate."""
+        dev = MockSUMPDevice()
+        dev.sample_rate = 1000000  # 1 MHz
+        dev.output.clear()
+        dev.process_byte(SUMP_DESC)
+        output = bytes(dev.output)
+        idx = output.index(SUMP_META_SAMPLE_RATE)
+        rate = struct.unpack(">I", output[idx+1:idx+5])[0]
+        self.assertEqual(rate, 1000000)
 
 
 if __name__ == "__main__":
