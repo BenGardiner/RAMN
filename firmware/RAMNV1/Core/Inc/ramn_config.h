@@ -47,6 +47,8 @@
 // Exactly one of the two transports below must be defined.
 // USB CDC: commands arrive/depart over the USB CDC (virtual COM port) interface.
 // LPUART1: commands arrive/depart over the LPUART1 (hardware UART) interface.
+//#define RAMN_SERIAL_CMD_TRANSPORT_USB_CDC
+//#define RAMN_SERIAL_CMD_TRANSPORT_LPUART1
 #if !defined(RAMN_SERIAL_CMD_TRANSPORT_USB_CDC) && !defined(RAMN_SERIAL_CMD_TRANSPORT_LPUART1)
 // Default transport when neither is pre-defined by the build system.
 #define RAMN_SERIAL_CMD_TRANSPORT_USB_CDC
