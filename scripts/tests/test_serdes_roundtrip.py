@@ -54,8 +54,9 @@ REPORT_PATH = os.path.join(os.path.dirname(__file__), "j1939_mapping_report.json
 
 
 def save_report():
-    with open(REPORT_PATH, "w") as f:
-        json.dump(MAPPING_REPORT, f, indent=4)
+    if MAPPING_REPORT:
+        with open(REPORT_PATH, "w") as f:
+            json.dump(MAPPING_REPORT, f, indent=4)
 
 
 atexit.register(save_report)
