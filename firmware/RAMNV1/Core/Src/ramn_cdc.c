@@ -1,4 +1,4 @@
-﻿/*
+/*
  * ramn_cdc.c
  ******************************************************************************
  * @attention
@@ -1163,8 +1163,6 @@ RAMN_Bool_t RAMN_CDC_ProcessSLCANBuffer(uint8_t* USBRxBuffer, uint32_t commandLe
 
 #if defined(ENABLE_ECUA_HOST_INTERACTION)
 				RAMN_FDCAN_InjectHostRxMessage(&CANTxHeader,CANTxData);
-#elif defined(PROCESS_SLCAN_BY_DBC)
-				RAMN_DBC_ProcessCANMessage(CANTxHeader.Identifier,DLCtoUINT8(dlc),(RAMN_CANFrameData_t*)CANTxData);
 #endif
 			}
 			else RAMN_USB_SendFromTask((uint8_t*)"\a",1U);
@@ -1220,8 +1218,6 @@ RAMN_Bool_t RAMN_CDC_ProcessSLCANBuffer(uint8_t* USBRxBuffer, uint32_t commandLe
 
 #if defined(ENABLE_ECUA_HOST_INTERACTION)
 				RAMN_FDCAN_InjectHostRxMessage(&CANTxHeader,CANTxData);
-#elif defined(PROCESS_SLCAN_BY_DBC)
-				RAMN_DBC_ProcessCANMessage(CANTxHeader.Identifier,DLCtoUINT8(dlc),(RAMN_CANFrameData_t*)CANTxData);
 #endif
 			}
 			else RAMN_USB_SendFromTask((uint8_t*)"\a",1U);
